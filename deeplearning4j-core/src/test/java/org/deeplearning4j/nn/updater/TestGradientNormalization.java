@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.updater;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.Updater;
 import org.deeplearning4j.nn.conf.GradientNormalization;
@@ -14,10 +15,11 @@ import org.nd4j.linalg.api.shape.Shape;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.nd4j.linalg.learning.config.NoOp;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import static org.junit.Assert.*;
 
-public class TestGradientNormalization {
+public class TestGradientNormalization extends BaseDL4JTest {
 
     @Test
     public void testRenormalizatonPerLayer() {
@@ -44,7 +46,7 @@ public class TestGradientNormalization {
         gradient.setGradientFor(DefaultParamInitializer.BIAS_KEY, biasGrad);
 
         Updater updater = UpdaterCreator.getUpdater(layer);
-        updater.update(layer, gradient, 0, 0, 1);
+        updater.update(layer, gradient, 0, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         assertNotEquals(weightGradCopy, weightGrad);
         assertNotEquals(biasGradCopy, biasGrad);
@@ -88,7 +90,7 @@ public class TestGradientNormalization {
         gradient.setGradientFor(DefaultParamInitializer.WEIGHT_KEY, weightGrad);
         gradient.setGradientFor(DefaultParamInitializer.BIAS_KEY, biasGrad);
 
-        updater.update(layer, gradient, 0, 0, 1);
+        updater.update(layer, gradient, 0, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         INDArray normWeightsExpected = weightGradCopy.div(weightGradCopy.norm2Number());
         INDArray normBiasExpected = biasGradCopy.div(biasGradCopy.norm2Number());
@@ -123,7 +125,7 @@ public class TestGradientNormalization {
         gradient.setGradientFor(DefaultParamInitializer.BIAS_KEY, biasGrad);
 
         Updater updater = UpdaterCreator.getUpdater(layer);
-        updater.update(layer, gradient, 0, 0, 1);
+        updater.update(layer, gradient, 0, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         assertNotEquals(weightGradCopy, weightGrad);
         assertNotEquals(biasGradCopy, biasGrad);
@@ -186,7 +188,7 @@ public class TestGradientNormalization {
                 assertTrue(layerGradL2 > threshold);
 
             Updater updater = UpdaterCreator.getUpdater(layer);
-            updater.update(layer, gradient, 0, 0, 1);
+            updater.update(layer, gradient, 0, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
             if (t == 0) {
                 //norm2 < threshold -> no change
@@ -237,7 +239,7 @@ public class TestGradientNormalization {
         assertTrue(weightL2 < threshold);
         assertTrue(biasL2 > threshold);
 
-        updater.update(layer, gradient, 0, 0, 1);
+        updater.update(layer, gradient, 0, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         assertEquals(weightGradCopy, weightGrad); //weight norm2 < threshold -> no change
         assertNotEquals(biasGradCopy, biasGrad); //bias norm2 > threshold -> rescale

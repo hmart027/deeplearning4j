@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.conf.layers;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.conf.GradientNormalization;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
@@ -23,7 +24,7 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-public class LayerConfigTest {
+public class LayerConfigTest extends BaseDL4JTest {
 
     @Test
     public void testLayerName() {
@@ -229,7 +230,7 @@ public class LayerConfigTest {
 
         conf = new NeuralNetConfiguration.Builder().updater(new RmsProp(1.0, 2.0, RmsProp.DEFAULT_RMSPROP_EPSILON)).list()
                         .layer(0, new DenseLayer.Builder().nIn(2).nOut(2).updater(new RmsProp(1.0, 1.0, RmsProp.DEFAULT_RMSPROP_EPSILON)).build())
-                        .layer(1, new DenseLayer.Builder().nIn(2).nOut(2).updater(new AdaDelta.Builder().rho(0.5).build()).build())
+                        .layer(1, new DenseLayer.Builder().nIn(2).nOut(2).updater(new AdaDelta(0.5,AdaDelta.DEFAULT_ADADELTA_EPSILON)).build())
                         .build();
 
         net = new MultiLayerNetwork(conf);

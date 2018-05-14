@@ -2,7 +2,7 @@ package org.deeplearning4j.parallelism.factory;
 
 import org.deeplearning4j.nn.api.Model;
 import org.deeplearning4j.nn.conf.WorkspaceMode;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.deeplearning4j.parallelism.MagicQueue;
 import org.deeplearning4j.parallelism.ParallelWrapper;
 import org.deeplearning4j.parallelism.trainer.DefaultTrainer;
@@ -35,15 +35,16 @@ public class DefaultTrainerContext implements TrainerContext {
      * @param useMDS     whether to use the {@link MagicQueue}
      *                   or not
      * @param wrapper    the wrapper instance to use with this trainer (this refernece is needed
-     *                   for coordination with the {@link ParallelWrapper} 's {@link IterationListener}
+     *                   for coordination with the {@link ParallelWrapper} 's {@link TrainingListener}
      * @return the created training instance
      */
     @Override
-    public Trainer create(int threadId, Model model, int rootDevice, boolean useMDS, ParallelWrapper wrapper,
+    public Trainer create(String uuid, int threadId, Model model, int rootDevice, boolean useMDS, ParallelWrapper wrapper,
                     WorkspaceMode mode, int averagingFrequency) {
 
         DefaultTrainer trainer = DefaultTrainer.builder().originalModel(model).replicatedModel(model).threadId(threadId)
                         .parallelWrapper(wrapper).workspaceMode(mode).useMDS(useMDS)
+                        .uuid(uuid + "_thread_" + threadId)
                         .averagingFrequency(averagingFrequency).build();
 
         trainer.setName("DefaultTrainer thread " + threadId);

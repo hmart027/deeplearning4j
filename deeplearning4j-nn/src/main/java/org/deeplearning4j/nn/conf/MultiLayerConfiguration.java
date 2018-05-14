@@ -64,11 +64,11 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
 
     @Getter
     @Setter
-    protected WorkspaceMode trainingWorkspaceMode;
+    protected WorkspaceMode trainingWorkspaceMode = WorkspaceMode.ENABLED;
 
     @Getter
     @Setter
-    protected WorkspaceMode inferenceWorkspaceMode;
+    protected WorkspaceMode inferenceWorkspaceMode = WorkspaceMode.ENABLED;
 
     @Getter
     @Setter
@@ -141,6 +141,13 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
         try {
             conf = mapper.readValue(json, MultiLayerConfiguration.class);
         } catch (IOException e) {
+            //Check if this exception came from legacy legacy deserializer...
+            String msg = e.getMessage();
+            if(msg != null && msg.contains("legacy")){
+                throw new RuntimeException("Error deserializing MultiLayerConfiguration - configuration may have a custom " +
+                        "layer, vertex or preprocessor, in pre version 1.0.0-alpha JSON format. These layers can be " +
+                        "deserialized by first registering them with NeuralNetConfiguration.registerLegacyCustomClassesForJSON(Class...)", e);
+            }
             throw new RuntimeException(e);
         }
 
@@ -343,8 +350,31 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
         return new NetworkMemoryReport(memoryReportMap, MultiLayerConfiguration.class, "MultiLayerNetwork", inputType);
     }
 
+    /**
+     * For the given input shape/type for the network, return a list of activation sizes for each layer in the network.<br>
+     * i.e., list.get(i) is the output activation sizes for layer i
+     * @param inputType Input type for the network
+     * @return A lits of activation types for the network, indexed by layer number
+     */
+    public List<InputType> getLayerActivationTypes(@NonNull InputType inputType){
+        List<InputType> out = new ArrayList<>();
+        int nLayers = confs.size();
+        for (int i = 0; i < nLayers; i++) {
+            InputPreProcessor preproc = getInputPreProcess(i);
+            if (preproc != null) {
+                inputType = preproc.getOutputType(inputType);
+            }
+
+            inputType = confs.get(i).getLayer().getOutputType(i, inputType);
+            out.add(inputType);
+        }
+        return out;
+    }
+
     @Data
     public static class Builder {
+
+        private static final int DEFAULT_TBPTT_LENGTH = 20;
 
         protected List<NeuralNetConfiguration> confs = new ArrayList<>();
         protected double dampingFactor = 100;
@@ -352,12 +382,12 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
         protected boolean pretrain = false;
         protected boolean backprop = true;
         protected BackpropType backpropType = BackpropType.Standard;
-        protected int tbpttFwdLength = 20;
-        protected int tbpttBackLength = 20;
+        protected int tbpttFwdLength = DEFAULT_TBPTT_LENGTH;
+        protected int tbpttBackLength = DEFAULT_TBPTT_LENGTH;
         protected InputType inputType;
 
-        protected WorkspaceMode trainingWorkspaceMode = WorkspaceMode.NONE;
-        protected WorkspaceMode inferenceWorkspaceMode = WorkspaceMode.SEPARATE;
+        protected WorkspaceMode trainingWorkspaceMode = WorkspaceMode.ENABLED;
+        protected WorkspaceMode inferenceWorkspaceMode = WorkspaceMode.ENABLED;
         protected CacheMode cacheMode = CacheMode.NONE;
 
         /**
@@ -388,28 +418,18 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * This method defines Workspace mode being used during training:
-         * NONE: workspace won't be used
-         * SINGLE: one workspace will be used during whole iteration loop
-         * SEPARATE: separate workspaces will be used for feedforward and backprop iteration loops
-         *
-         * @param workspaceMode
-         * @return
+         * @deprecated Use {@link NeuralNetConfiguration.Builder#trainingWorkspaceMode(WorkspaceMode)}
          */
+        @Deprecated
         public Builder trainingWorkspaceMode(@NonNull WorkspaceMode workspaceMode) {
             this.trainingWorkspaceMode = workspaceMode;
             return this;
         }
 
         /**
-         * This method defines Workspace mode being used during inference:
-         * NONE: workspace won't be used
-         * SINGLE: one workspace will be used during whole iteration loop
-         * SEPARATE: separate workspaces will be used for feedforward and backprop iteration loops
-         *
-         * @param workspaceMode
-         * @return
+         * @deprecated Use {@link NeuralNetConfiguration.Builder#inferenceWorkspaceMode(WorkspaceMode)}
          */
+        @Deprecated
         public Builder inferenceWorkspaceMode(@NonNull WorkspaceMode workspaceMode) {
             this.inferenceWorkspaceMode = workspaceMode;
             return this;
@@ -433,7 +453,7 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
          * but optionally truncated BPTT can be used for training recurrent neural networks.
          * If using TruncatedBPTT make sure you set both tBPTTForwardLength() and tBPTTBackwardLength()
          */
-        public Builder backpropType(BackpropType type) {
+        public Builder backpropType(@NonNull BackpropType type) {
             this.backpropType = type;
             return this;
         }
@@ -495,6 +515,14 @@ public class MultiLayerConfiguration implements Serializable, Cloneable {
         }
 
         public MultiLayerConfiguration build() {
+            //Validate BackpropType setting
+            if((tbpttBackLength != DEFAULT_TBPTT_LENGTH || tbpttFwdLength != DEFAULT_TBPTT_LENGTH) && backpropType != BackpropType.TruncatedBPTT){
+                log.warn("Truncated backpropagation through time lengths have been configured with values " + tbpttFwdLength
+                        + " and " + tbpttBackLength + " but backprop type is set to " + backpropType + ". TBPTT configuration" +
+                        " settings will only take effect if backprop type is set to BackpropType.TruncatedBPTT");
+            }
+
+
             if (inputType == null && inputPreProcessors.get(0) == null) {
                 //User hasn't set the InputType. Sometimes we can infer it...
                 // For example, Dense/RNN layers, where preprocessor isn't set -> user is *probably* going to feed in

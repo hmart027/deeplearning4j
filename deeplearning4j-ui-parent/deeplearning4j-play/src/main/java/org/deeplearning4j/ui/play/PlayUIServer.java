@@ -3,7 +3,6 @@ package org.deeplearning4j.ui.play;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.ParameterException;
-import com.google.common.collect.Sets;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.deeplearning4j.api.storage.StatsStorage;
@@ -13,6 +12,7 @@ import org.deeplearning4j.api.storage.StatsStorageRouter;
 import org.deeplearning4j.ui.api.Route;
 import org.deeplearning4j.ui.api.UIModule;
 import org.deeplearning4j.ui.api.UIServer;
+import org.deeplearning4j.ui.i18n.DefaultI18N;
 import org.deeplearning4j.ui.i18n.I18NProvider;
 import org.deeplearning4j.ui.module.convolutional.ConvolutionalListenerModule;
 import org.deeplearning4j.ui.module.defaultModule.DefaultModule;
@@ -22,16 +22,16 @@ import org.deeplearning4j.ui.module.tsne.TsneModule;
 import org.deeplearning4j.ui.play.misc.FunctionUtil;
 import org.deeplearning4j.ui.play.staticroutes.Assets;
 import org.deeplearning4j.ui.play.staticroutes.I18NRoute;
+import org.deeplearning4j.ui.storage.FileStatsStorage;
 import org.deeplearning4j.ui.storage.InMemoryStatsStorage;
 import org.deeplearning4j.ui.storage.impl.QueueStatsStorageListener;
 import org.nd4j.linalg.primitives.Pair;
-import org.reflections.ReflectionUtils;
-import org.reflections.Reflections;
 import play.Mode;
 import play.api.routing.Router;
 import play.routing.RoutingDsl;
 import play.server.Server;
 
+import java.io.File;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -79,12 +79,15 @@ public class PlayUIServer extends UIServer {
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     private Thread uiEventRoutingThread;
-    @Parameter(names = {"-r", "-enableRemote"}, description = "Whether to enable remote or not", arity = 1)
+
+    @Parameter(names = {"-r", "--enableRemote"}, description = "Whether to enable remote or not", arity = 1)
     private boolean enableRemote;
 
-
-    @Parameter(names = {"--uiPort"}, description = "Whether to enable remote or not", arity = 1)
+    @Parameter(names = {"-p", "--uiPort"}, description = "Custom HTTP port for UI", arity = 1)
     private int port = DEFAULT_UI_PORT;
+
+    @Parameter(names = {"-f", "--customStatsFile"}, description = "Path to create custom stats file (remote only)", arity = 1)
+    private String customStatsFile;
 
     public PlayUIServer() {
         this(DEFAULT_UI_PORT);
@@ -109,6 +112,15 @@ public class PlayUIServer extends UIServer {
             }
             System.exit(1);
         }
+
+        if(((DefaultI18N)I18NProvider.getInstance()).noI18NData()){
+            log.error("Error loading UI Language (Internationalization) data: no language resource data files were" +
+                    "found on the classpath. This usually occurs when running DL4J's UI from an uber-jar, which was " +
+                    "built incorrectly (without language resource files). See https://deeplearning4j.org/visualization#issues" +
+                    "for more details");
+            System.exit(1);
+        }
+
         RoutingDsl routingDsl = new RoutingDsl();
 
         //Set up index page and assets routing
@@ -128,26 +140,7 @@ public class PlayUIServer extends UIServer {
         uiModules.add(remoteReceiverModule);
 
         //Check service loader mechanism (Arbiter UI, etc) for modules
-        uiModules.addAll(modulesViaServiceLoader());
-
-
-        //Check if custom UI modules are enabled...
-        String customModulePropertyStr = System.getProperty(UI_CUSTOM_MODULE_PROPERTY);
-        boolean useCustomModules = false;
-        if (customModulePropertyStr != null) {
-            useCustomModules = Boolean.parseBoolean(customModulePropertyStr);
-        }
-
-        if (useCustomModules) {
-            List<Class<?>> excludeClasses = new ArrayList<>();
-            for (UIModule u : uiModules) {
-                excludeClasses.add(u.getClass());
-            }
-            List<UIModule> list = getCustomUIModules(excludeClasses);
-            uiModules.addAll(list);
-        }
-
-
+        modulesViaServiceLoader(uiModules);
 
         for (UIModule m : uiModules) {
             List<Route> routes = m.getRoutes();
@@ -189,17 +182,53 @@ public class PlayUIServer extends UIServer {
             }
         }
 
+        //Set play secret key, if required
+        //http://www.playframework.com/documentation/latest/ApplicationSecret
+        String crypto = System.getProperty("play.crypto.secret");
+        if (crypto == null || "changeme".equals(crypto) || "".equals(crypto) ) {
+            byte[] newCrypto = new byte[1024];
+
+            new Random().nextBytes(newCrypto);
+
+            String base64 = Base64.getEncoder().encodeToString(newCrypto);
+            System.setProperty("play.crypto.secret", base64);
+        }
+
         Router router = routingDsl.build();
-        server = Server.forRouter(router, Mode.PROD, port);
-        this.port = port;
+        try {
+            server = Server.forRouter(router, Mode.PROD, port);
+        } catch (Throwable e){
+            if(e.getMessage().contains("'play.crypto.provider")){
+                //Usual cause: user's uber-jar does not include application.conf
+                log.error("Error starting UI server due to missing play.crypto.provider config: This usually occurs due to missing" +
+                        " application.conf file. DL4J's UI (based on the Play framework) requires this file in order" +
+                        " to run. File can be missing due to incorrect creation of uber-jars that do not include resource" +
+                        " files. See https://deeplearning4j.org/visualization#issues for more information", e);
+            } else {
+                log.error("Unknown error when starting UI server",e);
+            }
+            throw e;
+        }
 
         log.info("DL4J UI Server started at {}", getAddress());
 
         uiEventRoutingThread = new Thread(new StatsEventRouterRunnable());
         uiEventRoutingThread.setDaemon(true);
         uiEventRoutingThread.start();
-        if (enableRemote)
-            enableRemoteListener();
+        if (enableRemote && customStatsFile != null) {
+            enableRemoteListener(new FileStatsStorage(new File(customStatsFile)), true);
+        }
+        else if(enableRemote) {
+            try {
+                File tempStatsFile = File.createTempFile("dl4j", "UIstats");
+                tempStatsFile.delete();
+                tempStatsFile.deleteOnExit();
+                enableRemoteListener(new FileStatsStorage(tempStatsFile), true);
+            } catch(Exception e) {
+                log.error("Failed to create temporary file for stats storage",e);
+                System.exit(1);
+            }
+        }
     }
 
     @Override
@@ -214,60 +243,36 @@ public class PlayUIServer extends UIServer {
         return addr;
     }
 
-    private List<UIModule> modulesViaServiceLoader() {
+    private void modulesViaServiceLoader(List<UIModule> uiModules) {
 
         ServiceLoader<UIModule> sl = ServiceLoader.load(UIModule.class);
         Iterator<UIModule> iter = sl.iterator();
 
         if (!iter.hasNext()) {
-            return Collections.emptyList();
+            return;
         }
 
-        List<UIModule> l = new ArrayList<>();
         while (iter.hasNext()) {
             UIModule m = iter.next();
-            log.debug("Loaded UI module via service loader: {}", m.getClass());
-            l.add(m);
-        }
+            Class<?> c = m.getClass();
+            boolean foundExisting = false;
+            for(UIModule mExisting : uiModules){
+                if(mExisting.getClass() == c){
+                    foundExisting = true;
+                    break;
+                }
+            }
 
-        return l;
+            if(!foundExisting) {
+                log.debug("Loaded UI module via service loader: {}", m.getClass());
+                uiModules.add(m);
+            }
+        }
     }
 
 
     public static void main(String[] args) {
         new PlayUIServer().runMain(args);
-    }
-
-    private List<UIModule> getCustomUIModules(List<Class<?>> excludeClasses) {
-        //Scan classpath for UI module instances, but ignore the 'excludeClasses' classes
-        List<String> classNames = Collections.singletonList(UIModule.class.getName());
-        Reflections reflections = new Reflections();
-        org.reflections.Store store = reflections.getStore();
-        Iterable<String> subtypesByName =
-                        store.getAll(org.reflections.scanners.SubTypesScanner.class.getSimpleName(), classNames);
-        Set<? extends Class<?>> subtypeClasses = Sets.newHashSet(ReflectionUtils.forNames(subtypesByName));
-
-        List<Class<?>> toCreate = new ArrayList<>();
-        for (Class<?> c : subtypeClasses) {
-            if (excludeClasses.contains(c))
-                continue;;
-            toCreate.add(c);
-        }
-
-        List<UIModule> ret = new ArrayList<>(toCreate.size());
-        for (Class<?> c : toCreate) {
-            UIModule m;
-            try {
-                m = (UIModule) c.newInstance();
-            } catch (Exception e) {
-                log.warn("Could not create instance of custom UIModule of type {}; skipping", c, e);
-                continue;
-            }
-            log.debug("Created instance of custom UI module: {}", c);
-            ret.add(m);
-        }
-
-        return ret;
     }
 
     @Override
@@ -398,6 +403,7 @@ public class PlayUIServer extends UIServer {
                 try {
                     Thread.sleep(uiProcessingDelay);
                 } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                     if (!shutdown.get()) {
                         throw new RuntimeException("Unexpected interrupted exception", e);
                     }

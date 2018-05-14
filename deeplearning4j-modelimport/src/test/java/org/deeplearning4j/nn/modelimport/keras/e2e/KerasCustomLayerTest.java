@@ -25,6 +25,10 @@ import org.deeplearning4j.nn.modelimport.keras.KerasModelImport;
 import org.deeplearning4j.nn.modelimport.keras.layers.custom.KerasLRN;
 import org.deeplearning4j.nn.modelimport.keras.layers.custom.KerasPoolHelper;
 import org.deeplearning4j.util.ModelSerializer;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.net.URL;
@@ -39,13 +43,17 @@ import java.net.URL;
 @Slf4j
 public class KerasCustomLayerTest {
 
+    @Rule
+    public TemporaryFolder testDir = new TemporaryFolder();
+
     // run manually, might take a long time to load (too long for unit tests)
-    // @Test
+    @Ignore
+    @Test
     public void testCustomLayerImport() throws Exception {
         // file paths
         String kerasWeightsAndConfigUrl = "http://blob.deeplearning4j.org/models/googlenet_keras_weightsandconfig.h5";
-        File cachedKerasFile = new File(System.getProperty("java.io.tmpdir"), "googlenet_keras_weightsandconfig.h5");
-        String outputPath = System.getProperty("java.io.tmpdir") + "/googlenet_dl4j_inference.zip";
+        File cachedKerasFile = testDir.newFile("googlenet_keras_weightsandconfig.h5");
+        String outputPath = testDir.newFile("googlenet_dl4j_inference.zip").getAbsolutePath();
 
         KerasLayer.registerCustomLayer("PoolHelper", KerasPoolHelper.class);
         KerasLayer.registerCustomLayer("LRN", KerasLRN.class);
@@ -58,7 +66,7 @@ public class KerasCustomLayerTest {
         }
 
         org.deeplearning4j.nn.api.Model importedModel =
-                        KerasModelImport.importKerasModelAndWeights(cachedKerasFile.getAbsolutePath());
+                KerasModelImport.importKerasModelAndWeights(cachedKerasFile.getAbsolutePath());
         ModelSerializer.writeModel(importedModel, outputPath, false);
 
         ComputationGraph serializedModel = ModelSerializer.restoreComputationGraph(outputPath);

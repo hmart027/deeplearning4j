@@ -23,9 +23,7 @@ import play.routing.RoutingDsl;
 import play.server.Server;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 import static play.mvc.Controller.request;
 import static play.mvc.Results.*;
@@ -61,16 +59,30 @@ public class NearestNeighborsServer {
         try {
             jcmdr.parse(args);
         } catch (ParameterException e) {
+            log.error("Error in NearestNeighboursServer parameters", e);
+            StringBuilder sb = new StringBuilder();
+            jcmdr.usage(sb);
+            log.error("Usage: {}", sb.toString());
+
             //User provides invalid input -> print the usage info
             jcmdr.usage();
             if (ndarrayPath == null)
-                System.err.println("Json path parameter is missing.");
+                log.error("Json path parameter is missing (null)");
             try {
                 Thread.sleep(500);
             } catch (Exception e2) {
             }
             System.exit(1);
         }
+
+        try {
+            runHelper();
+        } catch (Throwable t){
+            log.error("Error in NearestNeighboursServer run method",t);
+        }
+    }
+
+    protected void runHelper() throws Exception {
 
         String[] pathArr = ndarrayPath.split(",");
         //INDArray[] pointsArr = new INDArray[pathArr.length];
@@ -102,7 +114,7 @@ public class NearestNeighborsServer {
                 labels.addAll(FileUtils.readLines(new File(labelsPathArr[i]), "utf-8"));
             }
         }
-        if (labels.size() > 0 && labels.size() != rows)
+        if (!labels.isEmpty() && labels.size() != rows)
             throw new DL4JInvalidInputException(String.format("Number of labels must match number of rows in points matrix (expected %d, found %d)", rows, labels.size()));
 
         final INDArray points = Nd4j.createUninitialized(rows, cols);
@@ -132,15 +144,16 @@ public class NearestNeighborsServer {
                 if (record == null)
                     return badRequest(Json.toJson(Collections.singletonMap("status", "invalid json passed.")));
 
-                NearstNeighborsResults results =
-                                NearstNeighborsResults.builder().results(nearestNeighbor.search()).build();
+                NearestNeighborsResults results =
+                                NearestNeighborsResults.builder().results(nearestNeighbor.search()).build();
 
 
                 return ok(Json.toJson(results));
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                log.error("Error in POST /knn",e);
                 e.printStackTrace();
-                return internalServerError();
+                return internalServerError(e.getMessage());
             }
         })));
 
@@ -173,20 +186,33 @@ public class NearestNeighborsServer {
 
                 List<NearestNeighborsResult> nnResult = new ArrayList<>();
                 for (int i=0; i<results.size(); i++) {
-                    if (labels.size() > 0)
+                    if (!labels.isEmpty())
                         nnResult.add(new NearestNeighborsResult(results.get(i).getIndex(), distances.get(i), labels.get(results.get(i).getIndex())));
                     else
                         nnResult.add(new NearestNeighborsResult(results.get(i).getIndex(), distances.get(i)));
                 }
 
-                NearstNeighborsResults results2 = NearstNeighborsResults.builder().results(nnResult).build();
+                NearestNeighborsResults results2 = NearestNeighborsResults.builder().results(nnResult).build();
                 return ok(Json.toJson(results2));
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                log.error("Error in POST /knnnew",e);
                 e.printStackTrace();
-                return internalServerError();
+                return internalServerError(e.getMessage());
             }
         })));
+
+        //Set play secret key, if required
+        //http://www.playframework.com/documentation/latest/ApplicationSecret
+        String crypto = System.getProperty("play.crypto.secret");
+        if (crypto == null || "changeme".equals(crypto) || "".equals(crypto)) {
+            byte[] newCrypto = new byte[1024];
+
+            new Random().nextBytes(newCrypto);
+
+            String base64 = Base64.getEncoder().encodeToString(newCrypto);
+            System.setProperty("play.crypto.secret", base64);
+        }
 
         server = Server.forRouter(routingDsl.build(), Mode.PROD, port);
 
@@ -197,8 +223,10 @@ public class NearestNeighborsServer {
      * Stop the server
      */
     public void stop() {
-        if (server != null)
+        if (server != null) {
+            log.info("Attempting to stop server");
             server.stop();
+        }
     }
 
     public static void main(String[] args) throws Exception {

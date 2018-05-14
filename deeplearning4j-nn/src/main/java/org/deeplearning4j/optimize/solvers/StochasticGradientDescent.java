@@ -22,9 +22,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.deeplearning4j.nn.api.Model;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.gradient.Gradient;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 import org.deeplearning4j.optimize.api.StepFunction;
 import org.deeplearning4j.optimize.api.TerminationCondition;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.nd4j.linalg.api.memory.MemoryWorkspace;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
@@ -43,59 +44,57 @@ public class StochasticGradientDescent extends BaseOptimizer {
 
 
     public StochasticGradientDescent(NeuralNetConfiguration conf, StepFunction stepFunction,
-                    Collection<IterationListener> iterationListeners, Model model) {
-        super(conf, stepFunction, iterationListeners, model);
+                    Collection<TrainingListener> trainingListeners, Model model) {
+        super(conf, stepFunction, trainingListeners, model);
     }
 
     public StochasticGradientDescent(NeuralNetConfiguration conf, StepFunction stepFunction,
-                    Collection<IterationListener> iterationListeners,
+                    Collection<TrainingListener> trainingListeners,
                     Collection<TerminationCondition> terminationConditions, Model model) {
-        super(conf, stepFunction, iterationListeners, terminationConditions, model);
+        super(conf, stepFunction, trainingListeners, terminationConditions, model);
     }
 
 
     @Override
-    public boolean optimize() {
-        for (int i = 0; i < conf.getNumIterations(); i++) {
-            Pair<Gradient, Double> pair = gradientAndScore();
+    public boolean optimize(LayerWorkspaceMgr workspaceMgr) {
+        Pair<Gradient, Double> pair = gradientAndScore(workspaceMgr);
 
-            Gradient gradient = pair.getFirst();
+        Gradient gradient = pair.getFirst();
 
-            INDArray params = model.params();
+        INDArray params = model.params();
 
-            // if optimizer has GradientsAccumulator defined - go for it
-            if (accumulator != null) {
-                // we're propagating current update
-                accumulator.storeUpdate(gradient.gradient());
+        // if optimizer has GradientsAccumulator defined - go for it
+        if (accumulator != null) {
+            // we're propagating current update
+            accumulator.storeUpdate(gradient.gradient());
 
-                // and getting (possible) pending update from accumulator
-                //INDArray pendingUpdate = accumulator.getUpdate();
-                //stepFunction.step(params, pendingUpdate);
-                accumulator.applyUpdate(stepFunction, params, gradient.gradient());
+            // and getting (possible) pending update from accumulator
+            //INDArray pendingUpdate = accumulator.getUpdate();
+            //stepFunction.step(params, pendingUpdate);
+            accumulator.applyUpdate(stepFunction, params, gradient.gradient());
 
-                // if there's no update available - just go on then
-            } else {
-                // if accumulator isn't used - we just to for direct updates application
-                stepFunction.step(params, gradient.gradient());
-            }
-
-            //Note: model.params() is always in-place for MultiLayerNetwork and ComputationGraph, hence no setParams is necessary there
-            //However: for pretrain layers, params are NOT a view. Thus a setParams call is necessary
-            //But setParams should be a no-op for MLN and CG
-            model.setParams(params);
-
-            int iterationCount = BaseOptimizer.getIterationCount(model);
-            int epochCount = BaseOptimizer.getEpochCount(model);
-            try (MemoryWorkspace workspace = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
-                for (IterationListener listener : iterationListeners)
-                    listener.iterationDone(model, iterationCount, epochCount);
-            }
-
-            checkTerminalConditions(pair.getFirst().gradient(), oldScore, score, i);
-
-            BaseOptimizer.incrementIterationCount(model, 1);
-            applyConstraints(model);
+            // if there's no update available - just go on then
+        } else {
+            // if accumulator isn't used - we just to for direct updates application
+            stepFunction.step(params, gradient.gradient());
         }
+
+        //Note: model.params() is always in-place for MultiLayerNetwork and ComputationGraph, hence no setParams is necessary there
+        //However: for pretrain layers, params are NOT a view. Thus a setParams call is necessary
+        //But setParams should be a no-op for MLN and CG
+        model.setParams(params);
+
+        int iterationCount = BaseOptimizer.getIterationCount(model);
+        int epochCount = BaseOptimizer.getEpochCount(model);
+        try (MemoryWorkspace workspace = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
+            for (TrainingListener listener : trainingListeners)
+                listener.iterationDone(model, iterationCount, epochCount);
+        }
+
+        checkTerminalConditions(pair.getFirst().gradient(), oldScore, score, iterationCount);
+
+        BaseOptimizer.incrementIterationCount(model, 1);
+        applyConstraints(model);
         return true;
     }
 

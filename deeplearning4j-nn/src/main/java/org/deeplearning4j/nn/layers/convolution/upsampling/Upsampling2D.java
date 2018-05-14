@@ -23,7 +23,6 @@ import org.deeplearning4j.exception.DL4JInvalidInputException;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.conf.CacheMode;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
-import org.deeplearning4j.nn.conf.layers.BaseUpsamplingLayer;
 import org.deeplearning4j.nn.gradient.DefaultGradient;
 import org.deeplearning4j.nn.gradient.Gradient;
 import org.deeplearning4j.nn.graph.ComputationGraph;
@@ -31,9 +30,12 @@ import org.deeplearning4j.nn.layers.AbstractLayer;
 import org.nd4j.linalg.api.memory.MemoryWorkspace;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.api.ops.CustomOp;
+import org.nd4j.linalg.api.ops.impl.layers.convolution.Upsampling;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.primitives.Pair;
 import org.nd4j.linalg.api.ops.DynamicCustomOp;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
+import org.deeplearning4j.nn.workspace.ArrayType;
 
 
 import java.util.Arrays;
@@ -71,31 +73,30 @@ public class Upsampling2D extends AbstractLayer<org.deeplearning4j.nn.conf.layer
 
     @Override
     public Type type() {
-        return Type.SUBSAMPLING;
+        return Type.UPSAMPLING;
     }
 
 
     @Override
-    public Pair<Gradient, INDArray> backpropGradient(INDArray epsilon) {
+    public Pair<Gradient, INDArray> backpropGradient(INDArray epsilon, LayerWorkspaceMgr workspaceMgr) {
+        assertInputSet(true);
 
         int miniBatch = input.size(0);
         int inDepth = input.size(1);
         int inH = input.size(2);
         int inW = input.size(3);
 
-        int size = ((BaseUpsamplingLayer) layerConf()).getSize();
-
-        INDArray outEpsilon = Nd4j.createUninitialized(miniBatch * inDepth * inH * inW);
-        INDArray reshapedEpsilon = outEpsilon.reshape('c', miniBatch, inDepth, inH, inW);
-
-        INDArray forwardOutput  = preOutput(true, true);
+        INDArray reshapedEpsilon =  workspaceMgr.createUninitialized(ArrayType.ACTIVATION_GRAD, new int[]{miniBatch, inDepth, inH, inW}, 'c');
 
         Gradient gradient = new DefaultGradient();
 
+        int[] intArgs = new int[] {1}; // 1 is for NCHW
+
+
         CustomOp op = DynamicCustomOp.builder("upsampling_bp")
-                .setIntegerArguments(size)
-                .setInputs(forwardOutput, epsilon)
-                .setOutputs(reshapedEpsilon)
+                .addIntegerArguments(intArgs)
+                .addInputs(input, epsilon)
+                .addOutputs(reshapedEpsilon)
                 .callInplace(false)
                 .build();
         Nd4j.getExecutioner().exec(op);
@@ -103,18 +104,18 @@ public class Upsampling2D extends AbstractLayer<org.deeplearning4j.nn.conf.layer
         return new Pair<>(gradient, reshapedEpsilon);
     }
 
-    @Override
-    public INDArray preOutput(boolean training) {
-        return preOutput(training, false);
+    protected int[] getSize(){
+        return layerConf().getSize();
     }
 
-    public INDArray preOutput(boolean training, boolean forBackprop) {
-        applyDropOutIfNecessary(training);
+    protected INDArray preOutput(boolean training, boolean forBackprop, LayerWorkspaceMgr workspaceMgr) {
+        assertInputSet(false);
+        applyDropOutIfNecessary(training, workspaceMgr);
 
         if (input.rank() != 4) {
             throw new DL4JInvalidInputException("Got rank " + input.rank()
                     + " array as input to SubsamplingLayer with shape " + Arrays.toString(input.shape())
-                    + ". Expected rank 4 array with shape [minibatchSize, depth, inputHeight, inputWidth]. "
+                    + ". Expected rank 4 array with shape [minibatchSize, channels, inputHeight, inputWidth]. "
                     + layerId());
         }
 
@@ -127,39 +128,38 @@ public class Upsampling2D extends AbstractLayer<org.deeplearning4j.nn.conf.layer
         int inH = input.size(2);
         int inW = input.size(3);
 
-        int size = ((BaseUpsamplingLayer) layerConf()).getSize();
-        int outH = inH * size;
-        int outW = inW * size;
+        int[] size = getSize();
+        int outH = inH * size[0];
+        int outW = inW * size[1];
 
-        INDArray output = Nd4j.createUninitialized(miniBatch * inDepth * outH * outW);
-        INDArray reshapedOutput = output.reshape('c', miniBatch, inDepth, outH, outW);
+        INDArray reshapedOutput = workspaceMgr.createUninitialized(ArrayType.ACTIVATIONS, new int[]{miniBatch, inDepth, outH, outW}, 'c');
 
-        CustomOp op = DynamicCustomOp.builder("upsampling")
-                .setIntegerArguments(size)
-                .setInputs(input)
-                .setOutputs(reshapedOutput)
+        int[] intArgs = new int[] {size[0], size[1], 1}; // 1 is for NCHW
+
+        CustomOp upsampling = DynamicCustomOp.builder("upsampling2d")
+                .addIntegerArguments(intArgs)
+                .addInputs(input)
+                .addOutputs(reshapedOutput)
                 .callInplace(false)
                 .build();
-
-        Nd4j.getExecutioner().exec(op);
+        Nd4j.getExecutioner().exec(upsampling);
 
         return reshapedOutput;
     }
 
     @Override
-    public INDArray activate(boolean training) {
-        applyDropOutIfNecessary(training);
+    public INDArray activate(boolean training, LayerWorkspaceMgr workspaceMgr) {
+        assertInputSet(false);
+        applyDropOutIfNecessary(training, workspaceMgr);
 
         if (cacheMode == null)
             cacheMode = CacheMode.NONE;
 
-        INDArray z = preOutput(training);
+        INDArray z = preOutput(training, false, workspaceMgr);
 
         // we do cache only if cache workspace exists. Skip otherwise
-        if (training && cacheMode != CacheMode.NONE
-                && Nd4j.getWorkspaceManager().checkIfWorkspaceExists(ComputationGraph.workspaceCache)) {
-            try (MemoryWorkspace wsB = Nd4j.getWorkspaceManager()
-                    .getWorkspaceForCurrentThread(ComputationGraph.workspaceCache).notifyScopeBorrowed()) {
+        if (training && cacheMode != CacheMode.NONE && workspaceMgr.hasConfiguration(ArrayType.FF_CACHE) && workspaceMgr.isWorkspaceOpen(ArrayType.FF_CACHE)) {
+            try (MemoryWorkspace wsB = workspaceMgr.notifyScopeBorrowed(ArrayType.FF_CACHE)) {
                 preOutput = z.unsafeDuplication();
             }
         }
@@ -187,11 +187,6 @@ public class Upsampling2D extends AbstractLayer<org.deeplearning4j.nn.conf.layer
     }
 
     @Override
-    public void iterate(INDArray input) {
-        throw new UnsupportedOperationException(layerId());
-    }
-
-    @Override
     public Gradient gradient() {
         throw new UnsupportedOperationException("Not supported - no parameters");
     }
@@ -207,11 +202,7 @@ public class Upsampling2D extends AbstractLayer<org.deeplearning4j.nn.conf.layer
     }
 
     @Override
-    public void fit(INDArray input) {
-    }
-
-    @Override
-    public void computeGradientAndScore() {
+    public void fit(INDArray input, LayerWorkspaceMgr workspaceMgr) {
         throw new UnsupportedOperationException("Not supported");
     }
 

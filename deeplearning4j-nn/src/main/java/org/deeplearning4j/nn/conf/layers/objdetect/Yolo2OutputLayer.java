@@ -9,7 +9,7 @@ import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.memory.LayerMemoryReport;
 import org.deeplearning4j.nn.conf.preprocessor.FeedForwardToCnnPreProcessor;
 import org.deeplearning4j.nn.params.EmptyParamInitializer;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.lossfunctions.ILossFunction;
 import org.nd4j.linalg.lossfunctions.impl.LossL2;
@@ -32,6 +32,12 @@ import java.util.Map;
  * This loss function implementation is based on the YOLOv2 version of the paper. However, note that it doesn't
  * currently support simultaneous training on both detection and classification datasets as described in the
  * YOlO9000 paper.
+ *
+ * Note: Input activations to the Yolo2OutputLayer should have shape: [minibatch, b*(5+c), H, W], where:<br>
+ * b = number of bounding boxes (determined by config)<br>
+ * c = number of classes<br>
+ * H = output/label height<br>
+ * W = output/label width<br>
  *
  * @author Alex Black
  */
@@ -60,9 +66,9 @@ public class Yolo2OutputLayer extends org.deeplearning4j.nn.conf.layers.Layer {
     }
 
     @Override
-    public Layer instantiate(NeuralNetConfiguration conf, Collection<IterationListener> iterationListeners, int layerIndex, INDArray layerParamsView, boolean initializeParams) {
+    public Layer instantiate(NeuralNetConfiguration conf, Collection<TrainingListener> trainingListeners, int layerIndex, INDArray layerParamsView, boolean initializeParams) {
         org.deeplearning4j.nn.layers.objdetect.Yolo2OutputLayer ret = new org.deeplearning4j.nn.layers.objdetect.Yolo2OutputLayer(conf);
-        ret.setListeners(iterationListeners);
+        ret.setListeners(trainingListeners);
         ret.setIndex(layerIndex);
         ret.setParamsViewArray(layerParamsView);
         Map<String, INDArray> paramTable = initializer().init(conf, layerParamsView, initializeParams);

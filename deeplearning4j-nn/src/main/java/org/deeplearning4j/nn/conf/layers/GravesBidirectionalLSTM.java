@@ -27,7 +27,7 @@ import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.memory.LayerMemoryReport;
 import org.deeplearning4j.nn.layers.recurrent.LSTMHelpers;
 import org.deeplearning4j.nn.params.GravesBidirectionalLSTMParamInitializer;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.activations.IActivation;
 import org.nd4j.linalg.activations.impl.ActivationSigmoid;
@@ -36,13 +36,20 @@ import org.nd4j.linalg.api.ndarray.INDArray;
 import java.util.*;
 
 /**
- * LSTM recurrent net, based on Graves: Supervised Sequence Labelling with Recurrent Neural Networks
+ * Bidirectional LSTM recurrent net, based on Graves: Supervised Sequence Labelling with Recurrent Neural Networks
  * http://www.cs.toronto.edu/~graves/phd.pdf
+ *
+ * @deprecated use {@link org.deeplearning4j.nn.conf.layers.recurrent.Bidirectional} instead. With the
+ * Bidirectional layer wrapper you can make any recurrent layer bidirectional, in particular GravesLSTM.
+ * Note that this layer adds the output of both directions, which translates into "ADD" mode in Bidirectional.
+ *
+ * Usage: {@code .layer(new Bidirectional(Bidirectional.Mode.ADD, new GravesLSTM.Builder()....build()))}
  */
 @Data
 @NoArgsConstructor
 @ToString(callSuper = true)
 @EqualsAndHashCode(callSuper = true)
+@Deprecated
 public class GravesBidirectionalLSTM extends BaseRecurrentLayer {
 
     private double forgetGateBiasInit;
@@ -75,11 +82,11 @@ public class GravesBidirectionalLSTM extends BaseRecurrentLayer {
     }
 
     @Override
-    public Layer instantiate(NeuralNetConfiguration conf, Collection<IterationListener> iterationListeners,
+    public Layer instantiate(NeuralNetConfiguration conf, Collection<TrainingListener> trainingListeners,
                     int layerIndex, INDArray layerParamsView, boolean initializeParams) {
         org.deeplearning4j.nn.layers.recurrent.GravesBidirectionalLSTM ret =
                         new org.deeplearning4j.nn.layers.recurrent.GravesBidirectionalLSTM(conf);
-        ret.setListeners(iterationListeners);
+        ret.setListeners(trainingListeners);
         ret.setIndex(layerIndex);
         ret.setParamsViewArray(layerParamsView);
         Map<String, INDArray> paramTable = initializer().init(conf, layerParamsView, initializeParams);

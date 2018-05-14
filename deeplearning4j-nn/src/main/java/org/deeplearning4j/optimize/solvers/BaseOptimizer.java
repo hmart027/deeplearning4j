@@ -31,7 +31,11 @@ import org.deeplearning4j.nn.graph.ComputationGraph;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.updater.UpdaterCreator;
 import org.deeplearning4j.nn.updater.graph.ComputationGraphUpdater;
-import org.deeplearning4j.optimize.api.*;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
+import org.deeplearning4j.optimize.api.ConvexOptimizer;
+import org.deeplearning4j.optimize.api.StepFunction;
+import org.deeplearning4j.optimize.api.TerminationCondition;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.deeplearning4j.optimize.solvers.accumulation.GradientsAccumulator;
 import org.deeplearning4j.optimize.stepfunctions.NegativeDefaultStepFunction;
 import org.deeplearning4j.optimize.stepfunctions.NegativeGradientStepFunction;
@@ -57,7 +61,7 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
     protected static final Logger log = LoggerFactory.getLogger(BaseOptimizer.class);
     @Getter
     protected StepFunction stepFunction;
-    protected Collection<IterationListener> iterationListeners = new ArrayList<>();
+    protected Collection<TrainingListener> trainingListeners = new ArrayList<>();
     protected Collection<TerminationCondition> terminationConditions = new ArrayList<>();
     protected Model model;
     protected BackTrackLineSearch lineMaximizer;
@@ -80,12 +84,12 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
      *
      * @param conf
      * @param stepFunction
-     * @param iterationListeners
+     * @param trainingListeners
      * @param model
      */
     public BaseOptimizer(NeuralNetConfiguration conf, StepFunction stepFunction,
-                    Collection<IterationListener> iterationListeners, Model model) {
-        this(conf, stepFunction, iterationListeners, Arrays.asList(new ZeroDirection(), new EpsTermination()), model);
+                    Collection<TrainingListener> trainingListeners, Model model) {
+        this(conf, stepFunction, trainingListeners, Arrays.asList(new ZeroDirection(), new EpsTermination()), model);
     }
 
 
@@ -93,16 +97,16 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
      *
      * @param conf
      * @param stepFunction
-     * @param iterationListeners
+     * @param trainingListeners
      * @param terminationConditions
      * @param model
      */
     public BaseOptimizer(NeuralNetConfiguration conf, StepFunction stepFunction,
-                    Collection<IterationListener> iterationListeners,
+                    Collection<TrainingListener> trainingListeners,
                     Collection<TerminationCondition> terminationConditions, Model model) {
         this.conf = conf;
         this.stepFunction = (stepFunction != null ? stepFunction : getDefaultStepFunctionForOptimizer(this.getClass()));
-        this.iterationListeners = iterationListeners != null ? iterationListeners : new ArrayList<IterationListener>();
+        this.trainingListeners = trainingListeners != null ? trainingListeners : new ArrayList<TrainingListener>();
         this.terminationConditions = terminationConditions;
         this.model = model;
         lineMaximizer = new BackTrackLineSearch(model, this.stepFunction, this);
@@ -122,8 +126,9 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
 
     @Override
     public double score() {
-        model.computeGradientAndScore();
-        return model.score();
+//        model.computeGradientAndScore();
+//        return model.score();
+        throw new UnsupportedOperationException("Not yet reimplemented");
     }
 
     @Override
@@ -155,11 +160,11 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
     }
 
     @Override
-    public void setListeners(Collection<IterationListener> listeners) {
+    public void setListeners(Collection<TrainingListener> listeners) {
         if (listeners == null)
-            this.iterationListeners = Collections.emptyList();
+            this.trainingListeners = Collections.emptyList();
         else
-            this.iterationListeners = listeners;
+            this.trainingListeners = listeners;
     }
 
     @Override
@@ -168,23 +173,21 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
     }
 
     @Override
-    public Pair<Gradient, Double> gradientAndScore() {
+    public Pair<Gradient, Double> gradientAndScore(LayerWorkspaceMgr workspaceMgr) {
         oldScore = score;
-        model.computeGradientAndScore();
+        model.computeGradientAndScore(workspaceMgr);
 
-        if (iterationListeners != null && iterationListeners.size() > 0) {
+        if (trainingListeners != null && !trainingListeners.isEmpty()) {
             try (MemoryWorkspace workspace = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
-                for (IterationListener l : iterationListeners) {
-                    if (l instanceof TrainingListener) {
-                        ((TrainingListener) l).onGradientCalculation(model);
-                    }
+                for (TrainingListener l : trainingListeners) {
+                    l.onGradientCalculation(model);
                 }
             }
         }
 
         Pair<Gradient, Double> pair = model.gradientAndScore();
         score = pair.getSecond();
-        updateGradientAccordingToParams(pair.getFirst(), model, model.batchSize());
+        updateGradientAccordingToParams(pair.getFirst(), model, model.batchSize(), workspaceMgr);
         return pair;
     }
 
@@ -194,15 +197,17 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
      */
     // TODO add flag to allow retaining state between mini batches and when to apply updates
     @Override
-    public boolean optimize() {
+    public boolean optimize(LayerWorkspaceMgr workspaceMgr) {
         //validate the input before training
         INDArray gradient;
         INDArray searchDirection;
         INDArray parameters;
-        Pair<Gradient, Double> pair = gradientAndScore();
+        Pair<Gradient, Double> pair = gradientAndScore(workspaceMgr);
         if (searchState.isEmpty()) {
             searchState.put(GRADIENT_KEY, pair.getFirst().gradient());
-            setupSearchState(pair); //Only do this once
+            try(MemoryWorkspace ws = Nd4j.getWorkspaceManager().scopeOutOfWorkspaces()) {
+                setupSearchState(pair); //Only do this once
+            }
         } else {
             searchState.put(GRADIENT_KEY, pair.getFirst().gradient());
         }
@@ -219,49 +224,51 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
         }
 
         //calculate initial search direction
-        preProcessLine();
-
-        for (int i = 0; i < conf.getNumIterations(); i++) {
-            gradient = (INDArray) searchState.get(GRADIENT_KEY);
-            searchDirection = (INDArray) searchState.get(SEARCH_DIR);
-            parameters = (INDArray) searchState.get(PARAMS_KEY);
-
-            //perform one line search optimization
-            try {
-                step = lineMaximizer.optimize(parameters, gradient, searchDirection);
-            } catch (InvalidStepException e) {
-                log.warn("Invalid step...continuing another iteration: {}", e.getMessage());
-                step = 0.0;
-            }
-
-            //Update parameters based on final/best step size returned by line search:
-            if (step != 0.0) {
-                // TODO: inject accumulation use here
-                stepFunction.step(parameters, searchDirection, step); //Calculate params. given step size
-                model.setParams(parameters);
-            } else {
-                log.debug("Step size returned by line search is 0.0.");
-            }
-
-            pair = gradientAndScore();
-
-            //updates searchDirection
-            postStep(pair.getFirst().gradient());
-
-            //invoke listeners
-            int iterationCount = BaseOptimizer.getIterationCount(model);
-            int epochCount = BaseOptimizer.getEpochCount(model);
-            try (MemoryWorkspace workspace = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
-                for (IterationListener listener : iterationListeners)
-                    listener.iterationDone(model, iterationCount, epochCount);
-            }
-
-
-            //check for termination conditions based on absolute change in score
-            checkTerminalConditions(pair.getFirst().gradient(), oldScore, score, i);
-            incrementIterationCount(model, 1);
-            applyConstraints(model);
+        try(MemoryWorkspace ws = Nd4j.getWorkspaceManager().scopeOutOfWorkspaces()) {
+            preProcessLine();
         }
+
+        gradient = (INDArray) searchState.get(GRADIENT_KEY);
+        searchDirection = (INDArray) searchState.get(SEARCH_DIR);
+        parameters = (INDArray) searchState.get(PARAMS_KEY);
+
+        //perform one line search optimization
+        try {
+            step = lineMaximizer.optimize(parameters, gradient, searchDirection, workspaceMgr);
+        } catch (InvalidStepException e) {
+            log.warn("Invalid step...continuing another iteration: {}", e.getMessage());
+            step = 0.0;
+        }
+
+        //Update parameters based on final/best step size returned by line search:
+        if (step != 0.0) {
+            // TODO: inject accumulation use here
+            stepFunction.step(parameters, searchDirection, step); //Calculate params. given step size
+            model.setParams(parameters);
+        } else {
+            log.debug("Step size returned by line search is 0.0.");
+        }
+
+        pair = gradientAndScore(workspaceMgr);
+
+        //updates searchDirection
+        try(MemoryWorkspace ws = Nd4j.getWorkspaceManager().scopeOutOfWorkspaces()) {
+            postStep(pair.getFirst().gradient());
+        }
+
+        //invoke listeners
+        int iterationCount = BaseOptimizer.getIterationCount(model);
+        int epochCount = BaseOptimizer.getEpochCount(model);
+        try (MemoryWorkspace workspace = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
+            for (TrainingListener listener : trainingListeners)
+                listener.iterationDone(model, iterationCount, epochCount);
+        }
+
+
+        //check for termination conditions based on absolute change in score
+        checkTerminalConditions(pair.getFirst().gradient(), oldScore, score, iterationCount);
+        incrementIterationCount(model, 1);
+        applyConstraints(model);
         return true;
     }
 
@@ -311,7 +318,7 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
 
 
     @Override
-    public void updateGradientAccordingToParams(Gradient gradient, Model model, int batchSize) {
+    public void updateGradientAccordingToParams(Gradient gradient, Model model, int batchSize, LayerWorkspaceMgr workspaceMgr) {
         if (model instanceof ComputationGraph) {
             ComputationGraph graph = (ComputationGraph) model;
             if (computationGraphUpdater == null) {
@@ -319,7 +326,7 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
                     computationGraphUpdater = new ComputationGraphUpdater(graph);
                 }
             }
-            computationGraphUpdater.update(gradient, getIterationCount(model), getEpochCount(model), batchSize);
+            computationGraphUpdater.update(gradient, getIterationCount(model), getEpochCount(model), batchSize, workspaceMgr);
         } else {
             if (updater == null) {
                 try (MemoryWorkspace ws = Nd4j.getMemoryManager().scopeOutOfWorkspaces()) {
@@ -328,7 +335,7 @@ public abstract class BaseOptimizer implements ConvexOptimizer {
             }
             Layer layer = (Layer) model;
 
-            updater.update(layer, gradient, getIterationCount(model), getEpochCount(model), batchSize);
+            updater.update(layer, gradient, getIterationCount(model), getEpochCount(model), batchSize, workspaceMgr);
         }
     }
 

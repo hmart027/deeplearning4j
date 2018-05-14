@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.multilayer;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.datasets.iterator.impl.IrisDataSetIterator;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
@@ -14,18 +15,21 @@ import org.junit.Test;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.iter.NdIndexIterator;
 import org.nd4j.linalg.api.ndarray.INDArray;
+import org.nd4j.linalg.api.ops.impl.transforms.SigmoidDerivative;
+import org.nd4j.linalg.api.ops.impl.transforms.TanhDerivative;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions.LossFunction;
+import org.nd4j.linalg.ops.transforms.Transforms;
 
 import java.util.Arrays;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.fail;
 
-public class BackPropMLPTest {
+public class BackPropMLPTest extends BaseDL4JTest {
 
     @Test
     public void testMLPTrivial() {
@@ -298,7 +302,7 @@ public class BackPropMLPTest {
      */
     private static MultiLayerConfiguration getIrisMLPSimpleConfig(int[] hiddenLayerSizes,
                     Activation activationFunction) {
-        NeuralNetConfiguration.ListBuilder lb = new NeuralNetConfiguration.Builder().iterations(1).updater(new Sgd(0.1))
+        NeuralNetConfiguration.ListBuilder lb = new NeuralNetConfiguration.Builder().updater(new Sgd(0.1))
                     .seed(12345L).list();
 
         for (int i = 0; i < hiddenLayerSizes.length; i++) {
@@ -387,19 +391,19 @@ public class BackPropMLPTest {
 
     public static INDArray doTanhDerivative(INDArray input) {
         return Nd4j.getExecutioner()
-                        .execAndReturn(Nd4j.getOpFactory().createTransform("tanh", input.dup()).derivative());
+                        .execAndReturn(new TanhDerivative(input.dup()));
     }
 
     public static INDArray doSoftmax(INDArray input) {
-        return Nd4j.getExecutioner().execAndReturn(Nd4j.getOpFactory().createTransform("softmax", input.dup()));
+        return Transforms.softmax(input, true);
     }
 
     public static INDArray doSigmoid(INDArray input) {
-        return Nd4j.getExecutioner().execAndReturn(Nd4j.getOpFactory().createTransform("sigmoid", input.dup()));
+        return Transforms.sigmoid(input, true);
     }
 
     public static INDArray doSigmoidDerivative(INDArray input) {
-        return Nd4j.getExecutioner().execAndReturn(Nd4j.getOpFactory().createTransform("sigmoid", input).derivative());
+        return Nd4j.getExecutioner().execAndReturn(new SigmoidDerivative(input.dup()));
     }
 
 }

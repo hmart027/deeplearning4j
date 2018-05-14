@@ -4,6 +4,8 @@ import org.deeplearning4j.util.TimeSeriesUtils;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.ArrayType;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import java.util.Arrays;
 
@@ -174,7 +176,7 @@ public class EvaluationUtils {
             return new Pair<>(labels2d, predicted2d);
         }
 
-        INDArray oneDMask = TimeSeriesUtils.reshapeTimeSeriesMaskToVector(outputMask);
+        INDArray oneDMask = TimeSeriesUtils.reshapeTimeSeriesMaskToVector(outputMask, LayerWorkspaceMgr.noWorkspacesImmutable(), ArrayType.INPUT);
         float[] f = oneDMask.dup().data().asFloat();
         int[] rowsToPull = new int[f.length];
         int usedCount = 0;
@@ -182,6 +184,10 @@ public class EvaluationUtils {
             if (f[i] == 1.0f) {
                 rowsToPull[usedCount++] = i;
             }
+        }
+        if(usedCount == 0){
+            //Edge case: all time steps are masked -> nothing to extract
+            return null;
         }
         rowsToPull = Arrays.copyOfRange(rowsToPull, 0, usedCount);
 

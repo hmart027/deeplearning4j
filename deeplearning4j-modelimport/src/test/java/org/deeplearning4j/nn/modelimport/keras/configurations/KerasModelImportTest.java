@@ -18,9 +18,11 @@
 package org.deeplearning4j.nn.modelimport.keras.configurations;
 
 import lombok.extern.slf4j.Slf4j;
+import org.deeplearning4j.nn.modelimport.keras.KerasModel;
 import org.deeplearning4j.nn.modelimport.keras.KerasModelImport;
 import org.deeplearning4j.nn.modelimport.keras.exceptions.InvalidKerasConfigurationException;
 import org.deeplearning4j.nn.modelimport.keras.exceptions.UnsupportedKerasConfigurationException;
+import org.deeplearning4j.nn.modelimport.keras.utils.KerasModelBuilder;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.junit.Test;
 
@@ -29,52 +31,46 @@ import java.io.IOException;
 
 /**
  * Test import of Keras models.
- *
  */
 @Slf4j
 public class KerasModelImportTest {
     @Test
     public void testH5WithoutTensorflowScope() throws Exception {
         MultiLayerNetwork model = loadModel("tfscope/model.h5");
-//        System.out.println(model.params());
         assert (model != null);
     }
 
     @Test
     public void testH5WithTensorflowScope() throws Exception {
         MultiLayerNetwork model = loadModel("tfscope/model.h5.with.tensorflow.scope");
-//        System.out.println(model.params());
         assert (model != null);
     }
 
     @Test
     public void testWeightAndJsonWithoutTensorflowScope() throws Exception {
         MultiLayerNetwork model = loadModel("tfscope/model.json", "tfscope/model.weight");
-//        System.out.println(model.params());
         assert (model != null);
     }
 
     @Test
     public void testWeightAndJsonWithTensorflowScope() throws Exception {
         MultiLayerNetwork model = loadModel("tfscope/model.json.with.tensorflow.scope", "tfscope/model.weight.with.tensorflow.scope");
-//        System.out.println(model.params());
         assert (model != null);
     }
 
-    private MultiLayerNetwork loadModel(String modelJsonFilename, String modelWeightFilename) {
+    private MultiLayerNetwork loadModel(String modelJsonFilename, String modelWeightFilename)
+            throws NullPointerException {
         ClassLoader classLoader = getClass().getClassLoader();
         File modelJsonFile = new File(classLoader.getResource(modelJsonFilename).getFile());
         File modelWeightFile = new File(classLoader.getResource(modelWeightFilename).getFile());
 
         MultiLayerNetwork network = null;
         try {
-            network = KerasModelImport.importKerasSequentialModelAndWeights(modelJsonFile.getAbsolutePath(),
-                    modelWeightFile.getAbsolutePath());
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InvalidKerasConfigurationException e) {
-            e.printStackTrace();
-        } catch (UnsupportedKerasConfigurationException e) {
+            network = new KerasModel().modelBuilder()
+                    .modelJsonFilename((modelJsonFile.getAbsolutePath()))
+                    .weightsHdf5FilenameNoRoot(modelWeightFile.getAbsolutePath())
+                    .enforceTrainingConfig(false).buildSequential().getMultiLayerNetwork();
+        } catch (IOException | InvalidKerasConfigurationException | UnsupportedKerasConfigurationException e) {
             e.printStackTrace();
         }
 
@@ -88,14 +84,12 @@ public class KerasModelImportTest {
         MultiLayerNetwork model = null;
         try {
             model = KerasModelImport.importKerasSequentialModelAndWeights(modelFile.getAbsolutePath());
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InvalidKerasConfigurationException e) {
-            e.printStackTrace();
-        } catch (UnsupportedKerasConfigurationException e) {
+        } catch (IOException | InvalidKerasConfigurationException | UnsupportedKerasConfigurationException e) {
             e.printStackTrace();
         }
 
         return model;
     }
+
+
 }

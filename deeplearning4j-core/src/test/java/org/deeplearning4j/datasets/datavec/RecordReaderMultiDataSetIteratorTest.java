@@ -3,6 +3,7 @@ package org.deeplearning4j.datasets.datavec;
 
 import com.google.common.io.Files;
 import org.apache.commons.compress.utils.IOUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.datavec.api.io.labels.ParentPathLabelGenerator;
 import org.datavec.api.records.metadata.RecordMetaData;
@@ -11,12 +12,18 @@ import org.datavec.api.records.reader.SequenceRecordReader;
 import org.datavec.api.records.reader.impl.collection.CollectionSequenceRecordReader;
 import org.datavec.api.records.reader.impl.csv.CSVRecordReader;
 import org.datavec.api.records.reader.impl.csv.CSVSequenceRecordReader;
+import org.datavec.api.split.CollectionInputSplit;
 import org.datavec.api.split.FileSplit;
 import org.datavec.api.split.NumberedFileInputSplit;
 import org.datavec.api.writable.DoubleWritable;
+import org.datavec.api.writable.IntWritable;
 import org.datavec.api.writable.Writable;
 import org.datavec.image.recordreader.ImageRecordReader;
+import org.deeplearning4j.BaseDL4JTest;
+import org.deeplearning4j.TestUtils;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.dataset.api.MultiDataSet;
@@ -27,14 +34,17 @@ import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.nd4j.linalg.io.ClassPathResource;
 
 import java.io.*;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Random;
+import java.net.URI;
+import java.util.*;
 
 import static org.junit.Assert.*;
+import static org.nd4j.linalg.indexing.NDArrayIndex.all;
+import static org.nd4j.linalg.indexing.NDArrayIndex.point;
 
-public class RecordReaderMultiDataSetIteratorTest {
+public class RecordReaderMultiDataSetIteratorTest extends BaseDL4JTest {
+
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
     public void testsBasic() throws Exception {
@@ -71,17 +81,16 @@ public class RecordReaderMultiDataSetIteratorTest {
         assertFalse(rrmdsi.hasNext());
 
         //need to manually extract
+        File rootDir = temporaryFolder.newFolder();
         for (int i = 0; i < 3; i++) {
-            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive();
+            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive(rootDir);
         }
 
         //Load time series from CSV sequence files; compare to SequenceRecordReaderDataSetIterator
-        ClassPathResource resource = new ClassPathResource("csvsequence_0.txt");
-        String featuresPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
-        resource = new ClassPathResource("csvsequencelabels_0.txt");
-        String labelsPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
+        String featuresPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequence_%d.txt");
+        String labelsPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequencelabels_%d.txt");
 
         SequenceRecordReader featureReader = new CSVSequenceRecordReader(1, ",");
         SequenceRecordReader labelReader = new CSVSequenceRecordReader(1, ",");
@@ -181,9 +190,9 @@ public class RecordReaderMultiDataSetIteratorTest {
                 assertNotNull(lmds[i]);
 
             //Get the subsets of the original iris data
-            INDArray expIn1 = fds.get(NDArrayIndex.all(), NDArrayIndex.point(0));
-            INDArray expIn2 = fds.get(NDArrayIndex.all(), NDArrayIndex.interval(1, 2, true));
-            INDArray expOut1 = fds.get(NDArrayIndex.all(), NDArrayIndex.point(3));
+            INDArray expIn1 = fds.get(all(), point(0));
+            INDArray expIn2 = fds.get(all(), NDArrayIndex.interval(1, 2, true));
+            INDArray expOut1 = fds.get(all(), point(3));
             INDArray expOut2 = lds;
 
             assertEquals(expIn1, fmds[0]);
@@ -222,16 +231,15 @@ public class RecordReaderMultiDataSetIteratorTest {
         //Idea: take CSV sequences, and split "csvsequence_i.txt" into two separate inputs; keep "csvSequencelables_i.txt"
         // as standard one-hot output
         //need to manually extract
+        File rootDir = temporaryFolder.newFolder();
         for (int i = 0; i < 3; i++) {
-            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive();
+            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive(rootDir);
         }
 
-        ClassPathResource resource = new ClassPathResource("csvsequence_0.txt");
-        String featuresPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
-        resource = new ClassPathResource("csvsequencelabels_0.txt");
-        String labelsPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
+        String featuresPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequence_%d.txt");
+        String labelsPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequencelabels_%d.txt");
 
         SequenceRecordReader featureReader = new CSVSequenceRecordReader(1, ",");
         SequenceRecordReader labelReader = new CSVSequenceRecordReader(1, ",");
@@ -270,8 +278,8 @@ public class RecordReaderMultiDataSetIteratorTest {
             for (int i = 0; i < lmds.length; i++)
                 assertNotNull(lmds[i]);
 
-            INDArray expIn1 = fds.get(NDArrayIndex.all(), NDArrayIndex.interval(0, 1, true), NDArrayIndex.all());
-            INDArray expIn2 = fds.get(NDArrayIndex.all(), NDArrayIndex.interval(2, 2, true), NDArrayIndex.all());
+            INDArray expIn1 = fds.get(all(), NDArrayIndex.interval(0, 1, true), all());
+            INDArray expIn2 = fds.get(all(), NDArrayIndex.interval(2, 2, true), all());
 
             assertEquals(expIn1, fmds[0]);
             assertEquals(expIn2, fmds[1]);
@@ -285,16 +293,15 @@ public class RecordReaderMultiDataSetIteratorTest {
         //Idea: take CSV sequences, and split "csvsequence_i.txt" into two separate inputs; keep "csvSequencelables_i.txt"
         // as standard one-hot output
         //need to manually extract
+        File rootDir = temporaryFolder.newFolder();
         for (int i = 0; i < 3; i++) {
-            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive();
+            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive(rootDir);
         }
 
-        ClassPathResource resource = new ClassPathResource("csvsequence_0.txt");
-        String featuresPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
-        resource = new ClassPathResource("csvsequencelabels_0.txt");
-        String labelsPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
+        String featuresPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequence_%d.txt");
+        String labelsPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequencelabels_%d.txt");
 
         SequenceRecordReader featureReader = new CSVSequenceRecordReader(1, ",");
         SequenceRecordReader labelReader = new CSVSequenceRecordReader(1, ",");
@@ -359,16 +366,17 @@ public class RecordReaderMultiDataSetIteratorTest {
     @Test
     public void testVariableLengthTS() throws Exception {
         //need to manually extract
+        File rootDir = temporaryFolder.newFolder();
         for (int i = 0; i < 3; i++) {
-            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive();
+            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive(rootDir);
         }
+
+        String featuresPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequence_%d.txt");
+        String labelsPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequencelabelsShort_%d.txt");
+
         //Set up SequenceRecordReaderDataSetIterators for comparison
-        ClassPathResource resource = new ClassPathResource("csvsequence_0.txt");
-        String featuresPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
-        resource = new ClassPathResource("csvsequencelabelsShort_0.txt");
-        String labelsPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
 
         SequenceRecordReader featureReader = new CSVSequenceRecordReader(1, ",");
         SequenceRecordReader labelReader = new CSVSequenceRecordReader(1, ",");
@@ -443,16 +451,16 @@ public class RecordReaderMultiDataSetIteratorTest {
     @Test
     public void testVariableLengthTSMeta() throws Exception {
         //need to manually extract
+        File rootDir = temporaryFolder.newFolder();
         for (int i = 0; i < 3; i++) {
-            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive();
-            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive();
+            new ClassPathResource(String.format("csvsequence_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabels_%d.txt", i)).getTempFileFromArchive(rootDir);
+            new ClassPathResource(String.format("csvsequencelabelsShort_%d.txt", i)).getTempFileFromArchive(rootDir);
         }
         //Set up SequenceRecordReaderDataSetIterators for comparison
-        ClassPathResource resource = new ClassPathResource("csvsequence_0.txt");
-        String featuresPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
-        resource = new ClassPathResource("csvsequencelabelsShort_0.txt");
-        String labelsPath = resource.getTempFileFromArchive().getAbsolutePath().replaceAll("0", "%d");
+
+        String featuresPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequence_%d.txt");
+        String labelsPath = FilenameUtils.concat(rootDir.getAbsolutePath(), "csvsequencelabelsShort_%d.txt");
 
         //Set up
         SequenceRecordReader featureReader3 = new CSVSequenceRecordReader(1, ",");
@@ -499,7 +507,7 @@ public class RecordReaderMultiDataSetIteratorTest {
 
     @Test
     public void testImagesRRDMSI() throws Exception {
-        File parentDir = Files.createTempDir();
+        File parentDir = temporaryFolder.newFolder();
         parentDir.deleteOnExit();
         String str1 = FilenameUtils.concat(parentDir.getAbsolutePath(), "Zico/");
         String str2 = FilenameUtils.concat(parentDir.getAbsolutePath(), "Ziwang_Xu/");
@@ -509,9 +517,9 @@ public class RecordReaderMultiDataSetIteratorTest {
         f1.mkdirs();
         f2.mkdirs();
 
-        writeStreamToFile(new File(FilenameUtils.concat(f1.getPath(), "Zico_0001.jpg")),
+        TestUtils.writeStreamToFile(new File(FilenameUtils.concat(f1.getPath(), "Zico_0001.jpg")),
                         new ClassPathResource("lfwtest/Zico/Zico_0001.jpg").getInputStream());
-        writeStreamToFile(new File(FilenameUtils.concat(f2.getPath(), "Ziwang_Xu_0001.jpg")),
+        TestUtils.writeStreamToFile(new File(FilenameUtils.concat(f2.getPath(), "Ziwang_Xu_0001.jpg")),
                         new ClassPathResource("lfwtest/Ziwang_Xu/Ziwang_Xu_0001.jpg").getInputStream());
 
 
@@ -553,7 +561,7 @@ public class RecordReaderMultiDataSetIteratorTest {
 
     @Test
     public void testImagesRRDMSI_Batched() throws Exception {
-        File parentDir = Files.createTempDir();
+        File parentDir = temporaryFolder.newFolder();
         parentDir.deleteOnExit();
         String str1 = FilenameUtils.concat(parentDir.getAbsolutePath(), "Zico/");
         String str2 = FilenameUtils.concat(parentDir.getAbsolutePath(), "Ziwang_Xu/");
@@ -563,9 +571,9 @@ public class RecordReaderMultiDataSetIteratorTest {
         f1.mkdirs();
         f2.mkdirs();
 
-        writeStreamToFile(new File(FilenameUtils.concat(f1.getPath(), "Zico_0001.jpg")),
+        TestUtils.writeStreamToFile(new File(FilenameUtils.concat(f1.getPath(), "Zico_0001.jpg")),
                         new ClassPathResource("lfwtest/Zico/Zico_0001.jpg").getInputStream());
-        writeStreamToFile(new File(FilenameUtils.concat(f2.getPath(), "Ziwang_Xu_0001.jpg")),
+        TestUtils.writeStreamToFile(new File(FilenameUtils.concat(f2.getPath(), "Ziwang_Xu_0001.jpg")),
                         new ClassPathResource("lfwtest/Ziwang_Xu/Ziwang_Xu_0001.jpg").getInputStream());
 
         int outputNum = 2;
@@ -574,8 +582,10 @@ public class RecordReaderMultiDataSetIteratorTest {
         ImageRecordReader rr1 = new ImageRecordReader(10, 10, 1, labelMaker);
         ImageRecordReader rr1s = new ImageRecordReader(5, 5, 1, labelMaker);
 
-        rr1.initialize(new FileSplit(parentDir));
-        rr1s.initialize(new FileSplit(parentDir));
+        URI[] uris = new FileSplit(parentDir).locations();
+
+        rr1.initialize(new CollectionInputSplit(uris));
+        rr1s.initialize(new CollectionInputSplit(uris));
 
         MultiDataSetIterator trainDataIterator = new RecordReaderMultiDataSetIterator.Builder(2).addReader("rr1", rr1)
                         .addReader("rr1s", rr1s).addInput("rr1", 0, 0).addInput("rr1s", 0, 0)
@@ -600,19 +610,19 @@ public class RecordReaderMultiDataSetIteratorTest {
         assertEquals(d1.getLabels(), mds.getLabels(0));
 
         //Check label assignment:
-        INDArray expLabels = Nd4j.create(new double[][] {{1, 0}, {0, 1}});
+
+        File currentFile = rr1_b.getCurrentFile();
+        INDArray expLabels;
+        if(currentFile.getAbsolutePath().contains("Zico")){
+            expLabels = Nd4j.create(new double[][] {{0, 1}, {1, 0}});
+        } else {
+            expLabels = Nd4j.create(new double[][] {{1, 0}, {0, 1}});
+        }
 
         assertEquals(expLabels, d1.getLabels());
         assertEquals(expLabels, d2.getLabels());
     }
-
-
-    private static void writeStreamToFile(File out, InputStream is) throws IOException {
-        byte[] b = IOUtils.toByteArray(is);
-        try (OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
-            os.write(b);
-        }
-    }
+    
 
 
 
@@ -670,19 +680,104 @@ public class RecordReaderMultiDataSetIteratorTest {
         INDArray expF3 = Nd4j.create(new double[] {100, 200, 300, 400, 500});
         INDArray expL3 = Nd4j.create(new double[] {101, 201, 301, 401, 501});
 
-        assertEquals(expF1, f.get(NDArrayIndex.point(0), NDArrayIndex.all(),
+        assertEquals(expF1, f.get(point(0), all(),
                         NDArrayIndex.interval(expOffsetSeq1, expOffsetSeq1 + 1)));
-        assertEquals(expL1, l.get(NDArrayIndex.point(0), NDArrayIndex.all(),
+        assertEquals(expL1, l.get(point(0), all(),
                         NDArrayIndex.interval(expOffsetSeq1, expOffsetSeq1 + 1)));
 
-        assertEquals(expF2, f.get(NDArrayIndex.point(1), NDArrayIndex.all(),
+        assertEquals(expF2, f.get(point(1), all(),
                         NDArrayIndex.interval(expOffsetSeq2, expOffsetSeq2 + 3)));
-        assertEquals(expL2, l.get(NDArrayIndex.point(1), NDArrayIndex.all(),
+        assertEquals(expL2, l.get(point(1), all(),
                         NDArrayIndex.interval(expOffsetSeq2, expOffsetSeq2 + 3)));
 
-        assertEquals(expF3, f.get(NDArrayIndex.point(2), NDArrayIndex.all(),
+        assertEquals(expF3, f.get(point(2), all(),
                         NDArrayIndex.interval(expOffsetSeq3, expOffsetSeq3 + 5)));
-        assertEquals(expL3, l.get(NDArrayIndex.point(2), NDArrayIndex.all(),
+        assertEquals(expL3, l.get(point(2), all(),
                         NDArrayIndex.interval(expOffsetSeq3, expOffsetSeq3 + 5)));
+    }
+
+
+    @Test
+    public void testSeqRRDSIMasking(){
+        //This also tests RecordReaderMultiDataSetIterator, by virtue of
+        List<List<List<Writable>>> features = new ArrayList<>();
+        List<List<List<Writable>>> labels = new ArrayList<>();
+
+        features.add(Arrays.asList(l(new DoubleWritable(1)), l(new DoubleWritable(2)), l(new DoubleWritable(3))));
+        features.add(Arrays.asList(l(new DoubleWritable(4)), l(new DoubleWritable(5))));
+
+        labels.add(Arrays.asList(l(new IntWritable(0))));
+        labels.add(Arrays.asList(l(new IntWritable(1))));
+
+        CollectionSequenceRecordReader fR = new CollectionSequenceRecordReader(features);
+        CollectionSequenceRecordReader lR = new CollectionSequenceRecordReader(labels);
+
+        SequenceRecordReaderDataSetIterator seqRRDSI = new SequenceRecordReaderDataSetIterator(
+                fR, lR, 2, 2, false, SequenceRecordReaderDataSetIterator.AlignmentMode.ALIGN_END);
+
+        DataSet ds = seqRRDSI.next();
+
+        INDArray fMask = Nd4j.create(new double[][]{
+                {1,1,1},
+                {1,1,0}});
+
+        INDArray lMask = Nd4j.create(new double[][]{
+                {0,0,1},
+                {0,1,0}});
+
+        assertEquals(fMask, ds.getFeaturesMaskArray());
+        assertEquals(lMask, ds.getLabelsMaskArray());
+
+        INDArray f = Nd4j.create(new double[][]{
+                {1,2,3},
+                {4,5,0}});
+
+        INDArray l = Nd4j.create(2,2,3);
+        l.putScalar(0,0,2, 1.0);
+        l.putScalar(1,1,1, 1.0);
+
+        assertEquals(f, ds.getFeatures().get(all(), point(0), all()));
+        assertEquals(l, ds.getLabels());
+    }
+
+    private static List<Writable> l(Writable... in){
+        return Arrays.asList(in);
+    }
+
+
+
+    @Test
+    public void testExcludeStringColCSV() throws Exception {
+        File csvFile = temporaryFolder.newFile();
+
+        StringBuilder sb = new StringBuilder();
+        for(int i=1; i<=10; i++ ){
+            if(i > 1){
+                sb.append("\n");
+            }
+            sb.append("skip_").append(i).append(",").append(i).append(",").append(i + 0.5);
+        }
+        FileUtils.writeStringToFile(csvFile, sb.toString());
+
+        RecordReader rr = new CSVRecordReader();
+        rr.initialize(new FileSplit(csvFile));
+
+        RecordReaderMultiDataSetIterator rrmdsi = new RecordReaderMultiDataSetIterator.Builder(10)
+                .addReader("rr", rr)
+                .addInput("rr", 1, 1)
+                .addOutput("rr", 2, 2)
+                .build();
+
+        INDArray expFeatures = Nd4j.linspace(1,10,10).transpose();
+        INDArray expLabels = Nd4j.linspace(1,10,10).addi(0.5).transpose();
+
+        MultiDataSet mds = rrmdsi.next();
+        assertFalse(rrmdsi.hasNext());
+
+        assertEquals(expFeatures, mds.getFeatures(0));
+        assertEquals(expLabels, mds.getLabels(0));
+
+
+
     }
 }

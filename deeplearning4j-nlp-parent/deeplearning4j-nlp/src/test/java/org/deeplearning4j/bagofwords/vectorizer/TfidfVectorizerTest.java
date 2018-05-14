@@ -18,8 +18,11 @@
 
 package org.deeplearning4j.bagofwords.vectorizer;
 
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
-import org.datavec.api.util.ClassPathResource;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import org.nd4j.linalg.io.ClassPathResource;
 import org.deeplearning4j.models.word2vec.VocabWord;
 import org.deeplearning4j.models.word2vec.wordstore.VocabCache;
 import org.deeplearning4j.text.sentenceiterator.CollectionSentenceIterator;
@@ -29,11 +32,11 @@ import org.deeplearning4j.text.tokenization.tokenizer.DefaultTokenizer;
 import org.deeplearning4j.text.tokenization.tokenizer.Tokenizer;
 import org.deeplearning4j.text.tokenization.tokenizerfactory.DefaultTokenizerFactory;
 import org.deeplearning4j.text.tokenization.tokenizerfactory.TokenizerFactory;
-import org.deeplearning4j.util.SerializationUtils;
 import org.junit.Test;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.exception.ND4JIllegalStateException;
+import org.nd4j.linalg.util.SerializationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,12 +53,14 @@ import static org.junit.Assume.assumeNotNull;
 /**
  * @author Adam Gibson
  */
+@Slf4j
 public class TfidfVectorizerTest {
 
-    private static final Logger log = LoggerFactory.getLogger(TfidfVectorizerTest.class);
+    @Rule
+    public final TemporaryFolder testDir = new TemporaryFolder();
 
 
-    @Test
+    @Test(timeout = 60000L)
     public void testTfIdfVectorizer() throws Exception {
         File rootDir = new ClassPathResource("tripledir").getFile();
         LabelAwareSentenceIterator iter = new LabelAwareFileSentenceIterator(rootDir);
@@ -114,8 +119,8 @@ public class TfidfVectorizerTest {
         assertEquals(1, cnt);
 
 
-        File tempFile = File.createTempFile("somefile", "Dsdas");
-        tempFile.deleteOnExit();
+        File tempFile = testDir.newFile("somefile.bin");
+        tempFile.delete();
 
         SerializationUtils.saveObject(vectorizer, tempFile);
 
@@ -126,7 +131,7 @@ public class TfidfVectorizerTest {
         assertEquals(vector, dataSet.getFeatureMatrix());
     }
 
-    @Test
+    @Test(timeout = 10000L)
     public void testParallelFlag1() throws Exception {
         val vectorizer = new TfidfVectorizer.Builder()
                 .allowParallelTokenization(false)
@@ -136,7 +141,7 @@ public class TfidfVectorizerTest {
     }
 
 
-    @Test(expected = ND4JIllegalStateException.class)
+    @Test(expected = ND4JIllegalStateException.class, timeout = 20000L)
     public void testParallelFlag2() throws Exception {
         val collection = new ArrayList<String>();
         collection.add("First string");
@@ -160,7 +165,7 @@ public class TfidfVectorizerTest {
         vectorizer.fit();
     }
 
-    @Test(expected = ND4JIllegalStateException.class)
+    @Test(expected = ND4JIllegalStateException.class, timeout = 20000L)
     public void testParallelFlag3() throws Exception {
         val collection = new ArrayList<String>();
         collection.add("First string");

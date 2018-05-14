@@ -21,7 +21,8 @@ package org.deeplearning4j.nn.api;
 
 import org.deeplearning4j.nn.conf.CacheMode;
 import org.deeplearning4j.nn.gradient.Gradient;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.primitives.Pair;
 
@@ -38,7 +39,8 @@ import java.util.Collection;
 public interface Layer extends Serializable, Cloneable, Model {
 
     enum Type {
-        FEED_FORWARD, RECURRENT, CONVOLUTIONAL, SUBSAMPLING, RECURSIVE, MULTILAYER, NORMALIZATION
+        FEED_FORWARD, RECURRENT, CONVOLUTIONAL, CONVOLUTIONAL3D,
+        SUBSAMPLING, UPSAMPLING, RECURSIVE, MULTILAYER, NORMALIZATION
     }
 
     enum TrainingMode {
@@ -53,18 +55,22 @@ public interface Layer extends Serializable, Cloneable, Model {
      */
     void setCacheMode(CacheMode mode);
 
-    /**Calculate the l2 regularization term<br>
+    /**
+     * Calculate the l2 regularization term<br>
      * 0.0 if regularization is not used. Or 0.5 * l2Coeff * l2Magnitude otherwise.<br>
      * Note that this does not divide by mini-batch size
+     *
      * @param backpropOnlyParams If true: calculate L2 based on backprop params only. If false: calculate
      *                           based on all params (including pretrain params, if any)
      * @return the l2 regularization term for this layer.
      */
     double calcL2(boolean backpropOnlyParams);
 
-    /**Calculate the l1 regularization term<br>
+    /**
+     * Calculate the l1 regularization term<br>
      * 0.0 if regularization is not used. Or l1Coeff * l1Magnitude otherwise.<br>
      * Note that this does not divide by mini-batch size
+     *
      * @param backpropOnlyParams If true: calculate L1 based on backprop params only. If false: calculate
      *                           based on all params (including pretrain params, if any)
      * @return the l1 regularization term for this layer.
@@ -73,97 +79,46 @@ public interface Layer extends Serializable, Cloneable, Model {
 
     /**
      * Returns the layer type
+     *
      * @return
      */
     Type type();
 
 
-    /**Calculate the gradient relative to the error in the next layer
-     * @param epsilon w^(L+1)*delta^(L+1). Or, equiv: dC/da, i.e., (dC/dz)*(dz/da) = dC/da, where C 
-     * 	is cost function a=sigma(z) is activation.
-     * @return Pair<Gradient,INDArray> where Gradient is gradient for this layer, INDArray is epsilon needed by next
-     *  layer, but before element-wise multiply by sigmaPrime(z). So for standard feed-forward layer, if this layer is
-     *  L, then return.getSecond() == (w^(L)*(delta^(L))^T)^T
-     */
-    Pair<Gradient, INDArray> backpropGradient(INDArray epsilon);
-
     /**
-     * Raw activations
-     * @param x the input to transform
-     * @return the raw activation
-     * for this layer
+     * Calculate the gradient relative to the error in the next layer
+     *
+     * @param epsilon      w^(L+1)*delta^(L+1). Or, equiv: dC/da, i.e., (dC/dz)*(dz/da) = dC/da, where C
+     *                     is cost function a=sigma(z) is activation.
+     * @param workspaceMgr Workspace manager
+     * @return Pair<Gradient   ,   INDArray> where Gradient is gradient for this layer, INDArray is epsilon (activation gradient)
+     * needed by next layer, but before element-wise multiply by sigmaPrime(z). So for standard feed-forward layer, if this layer is
+     * L, then return.getSecond() == dL/dIn = (w^(L)*(delta^(L))^T)^T. Note that the returned array should be placed in the
+     * {@link org.deeplearning4j.nn.workspace.ArrayType#ACTIVATION_GRAD} workspace via the workspace manager
      */
-    INDArray preOutput(INDArray x);
-
+    Pair<Gradient, INDArray> backpropGradient(INDArray epsilon, LayerWorkspaceMgr workspaceMgr);
 
 
     /**
-     * Raw activations
-     * @param x the input to transform
-     * @return the raw activation
-     * for this layer
+     * Perform forward pass and return the activations array with the last set input
+     *
+     * @param training     training or test mode
+     * @param workspaceMgr Workspace manager
+     * @return the activation (layer output) of the last specified input. Note that the returned array should be placed
+     * in the {@link org.deeplearning4j.nn.workspace.ArrayType#ACTIVATIONS} workspace via the workspace manager
      */
-    INDArray preOutput(INDArray x, TrainingMode training);
-
+    INDArray activate(boolean training, LayerWorkspaceMgr workspaceMgr);
 
     /**
-     * Trigger an activation with the last specified input
-     * @param training  training or test mode
-     * @return the activation of the last specified input
+     * Perform forward pass and return the activations array with the specified input
+     *
+     * @param input    the input to use
+     * @param training train or test mode
+     * @param mgr      Workspace manager.
+     * @return Activations array. Note that the returned array should be placed in the
+     * {@link org.deeplearning4j.nn.workspace.ArrayType#ACTIVATIONS} workspace via the workspace manager
      */
-    INDArray activate(TrainingMode training);
-
-    /**
-     * Initialize the layer with the given input
-     * and return the activation for this layer
-     * given this input
-     * @param input the input to use
-     * @param training  train or test mode
-     * @return
-     */
-    INDArray activate(INDArray input, TrainingMode training);
-
-
-    /**
-     * Raw activations
-     * @param x the input to transform
-     * @return the raw activation
-     * for this layer
-     */
-    INDArray preOutput(INDArray x, boolean training);
-
-
-    /**
-     * Trigger an activation with the last specified input
-     * @param training  training or test mode
-     * @return the activation of the last specified input
-     */
-    INDArray activate(boolean training);
-
-    /**
-     * Initialize the layer with the given input
-     * and return the activation for this layer
-     * given this input
-     * @param input the input to use
-     * @param training  train or test mode
-     * @return
-     */
-    INDArray activate(INDArray input, boolean training);
-
-    /**
-     * Trigger an activation with the last specified input
-     * @return the activation of the last specified input
-     */
-    INDArray activate();
-
-    /**
-     * Initialize the layer with the given input
-     * and return the activation for this layer
-     * given this input
-     * @param input the input to use
-     * @return
-     */
-    INDArray activate(INDArray input);
+    INDArray activate(INDArray input, boolean training, LayerWorkspaceMgr mgr);
 
     /**
      * Return a transposed copy of the weights/bias
@@ -176,26 +131,27 @@ public interface Layer extends Serializable, Cloneable, Model {
 
     /**
      * Clone the layer
+     *
      * @return
      */
+    @Deprecated
     Layer clone();
-
 
 
     /**
      * Get the iteration listeners for this layer.
      */
-    Collection<IterationListener> getListeners();
+    Collection<TrainingListener> getListeners();
 
     /**
      * Set the iteration listeners for this layer.
      */
-    void setListeners(IterationListener... listeners);
+    void setListeners(TrainingListener... listeners);
 
     /**
      * Set the iteration listeners for this layer.
      */
-    void setListeners(Collection<IterationListener> listeners);
+    void setListeners(Collection<TrainingListener> listeners);
 
     /**
      * Set the layer index.
@@ -228,18 +184,21 @@ public interface Layer extends Serializable, Cloneable, Model {
     void setEpochCount(int epochCount);
 
     /**
-     * Get the layer input.
+     * Set the layer input.
      */
-    void setInput(INDArray input);
+    void setInput(INDArray input, LayerWorkspaceMgr workspaceMgr);
 
-    /** Set current/last input mini-batch size.<br>
+    /**
+     * Set current/last input mini-batch size.<br>
      * Used for score and gradient calculations. Mini batch size may be different from
      * getInput().size(0) due to reshaping operations - for example, when using RNNs with
      * DenseLayer and OutputLayer. Called automatically during forward pass.
      */
     void setInputMiniBatchSize(int size);
 
-    /** Get current/last input mini-batch size, as set by setInputMiniBatchSize(int)
+    /**
+     * Get current/last input mini-batch size, as set by setInputMiniBatchSize(int)
+     *
      * @see Layer#setInputMiniBatchSize(int)
      */
     int getInputMiniBatchSize();
@@ -247,6 +206,7 @@ public interface Layer extends Serializable, Cloneable, Model {
     /**
      * Set the mask array. Note: In general, {@link #feedForwardMaskArray(INDArray, MaskState, int)} should be used in
      * preference to this.
+     *
      * @param maskArray Mask array to set
      */
     void setMaskArray(INDArray maskArray);
@@ -255,7 +215,7 @@ public interface Layer extends Serializable, Cloneable, Model {
     INDArray getMaskArray();
 
     /**
-     * Returns true if the layer can be trained in an unsupervised/pretrain manner (VAE, RBMs etc)
+     * Returns true if the layer can be trained in an unsupervised/pretrain manner (AE, VAE, etc)
      *
      * @return true if the layer can be pretrained (using fit(INDArray), false otherwise
      */
@@ -277,7 +237,7 @@ public interface Layer extends Serializable, Cloneable, Model {
      * @param currentMaskState Current state of the mask - see {@link MaskState}
      * @param minibatchSize    Current minibatch size. Needs to be known as it cannot always be inferred from the activations
      *                         array due to reshaping (such as a DenseLayer within a recurrent neural network)
-     * @return                 New mask array after this layer, along with the new mask state.
+     * @return New mask array after this layer, along with the new mask state.
      */
     Pair<INDArray, MaskState> feedForwardMaskArray(INDArray maskArray, MaskState currentMaskState, int minibatchSize);
 }

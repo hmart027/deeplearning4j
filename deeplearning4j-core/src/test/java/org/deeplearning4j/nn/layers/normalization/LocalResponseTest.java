@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.layers.normalization;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.datasets.iterator.impl.MnistDataSetIterator;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
@@ -23,6 +24,7 @@ import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -30,7 +32,7 @@ import static org.junit.Assert.assertEquals;
 /**
  *
  */
-public class LocalResponseTest {
+public class LocalResponseTest extends BaseDL4JTest {
 
     private INDArray x = Nd4j.create(new double[] {0.88128096, -0.96666986, -0.61832994, 0.26418415, 0.05694608,
                     0.2950289, 0.99222249, 0.24541704, 0.4219842, 0.96430975, 0.19299535, -0.06658337, -0.27603117,
@@ -95,7 +97,7 @@ public class LocalResponseTest {
                         .build();
 
         layer = new LocalResponseNormalization().instantiate(conf, null, 0, null, false);
-        activationsActual = layer.activate(x);
+        activationsActual = layer.activate(x, false, LayerWorkspaceMgr.noWorkspaces());
     }
 
     @Test
@@ -107,7 +109,7 @@ public class LocalResponseTest {
 
     @Test
     public void testBackpropGradient() {
-        Pair<Gradient, INDArray> containedOutput = layer.backpropGradient(epsilon);
+        Pair<Gradient, INDArray> containedOutput = layer.backpropGradient(epsilon, LayerWorkspaceMgr.noWorkspaces());
 
         assertEquals(newEpsilonExpected.getDouble(8), containedOutput.getSecond().getDouble(8), 1e-4);
         assertEquals(newEpsilonExpected.getDouble(20), containedOutput.getSecond().getDouble(20), 1e-4);
@@ -129,7 +131,7 @@ public class LocalResponseTest {
     @Test
     public void testMultiCNNLayer() throws Exception {
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
-                        .optimizationAlgo(OptimizationAlgorithm.LINE_GRADIENT_DESCENT).iterations(1).seed(123).list()
+                        .optimizationAlgo(OptimizationAlgorithm.LINE_GRADIENT_DESCENT).seed(123).list()
                         .layer(0, new ConvolutionLayer.Builder().nIn(1).nOut(6).weightInit(WeightInit.XAVIER)
                                         .activation(Activation.RELU).build())
                         .layer(1, new LocalResponseNormalization.Builder().build()).layer(2,
@@ -187,7 +189,7 @@ public class LocalResponseTest {
                         (org.deeplearning4j.nn.layers.normalization.LocalResponseNormalization) lrn.instantiate(nnc,
                                         null, 0, null, false);
 
-        INDArray outAct = layer.activate(in, true);
+        INDArray outAct = layer.activate(in, true, LayerWorkspaceMgr.noWorkspaces());
 
         assertEquals(outExp, outAct);
     }

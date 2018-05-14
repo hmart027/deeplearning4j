@@ -25,6 +25,7 @@ public class MaskedReductionUtil {
     private static final int[] CNN_DIM_MASK_H = new int[] {0, 2};
     private static final int[] CNN_DIM_MASK_W = new int[] {0, 3};
 
+    private MaskedReductionUtil(){ }
 
     public static INDArray maskedPoolingTimeSeries(PoolingType poolingType, INDArray toReduce, INDArray mask,
                     int pnorm) {
@@ -72,8 +73,6 @@ public class MaskedReductionUtil {
                 INDArray pNorm = abs.sum(2);
 
                 return Transforms.pow(pNorm, 1.0 / pnorm);
-            case NONE:
-                throw new UnsupportedOperationException("NONE pooling type not supported");
             default:
                 throw new UnsupportedOperationException("Unknown or not supported pooling type: " + poolingType);
         }
@@ -152,8 +151,6 @@ public class MaskedReductionUtil {
                 Nd4j.getExecutioner().exec(new BroadcastMulOp(numerator, mask, numerator, 0, 2)); //Apply mask
 
                 return numerator;
-            case NONE:
-                throw new UnsupportedOperationException("NONE pooling type not supported");
             default:
                 throw new UnsupportedOperationException("Unknown or not supported pooling type: " + poolingType);
         }
@@ -162,7 +159,7 @@ public class MaskedReductionUtil {
 
     public static INDArray maskedPoolingConvolution(PoolingType poolingType, INDArray toReduce, INDArray mask,
                     boolean alongHeight, int pnorm) {
-        // [minibatch, depth, h=1, w=X] or [minibatch, depth, h=X, w=1] data
+        // [minibatch, channels, h=1, w=X] or [minibatch, channels, h=X, w=1] data
         // with a mask array of shape [minibatch, X]
 
         //If masking along height: broadcast dimensions are [0,2]
@@ -204,8 +201,6 @@ public class MaskedReductionUtil {
                 INDArray pNorm = abs.sum(2, 3);
 
                 return Transforms.pow(pNorm, 1.0 / pnorm);
-            case NONE:
-                throw new UnsupportedOperationException("NONE pooling type not supported");
             default:
                 throw new UnsupportedOperationException("Unknown or not supported pooling type: " + poolingType);
         }
@@ -215,7 +210,7 @@ public class MaskedReductionUtil {
     public static INDArray maskedPoolingEpsilonCnn(PoolingType poolingType, INDArray input, INDArray mask,
                     INDArray epsilon2d, boolean alongHeight, int pnorm) {
 
-        // [minibatch, depth, h=1, w=X] or [minibatch, depth, h=X, w=1] data
+        // [minibatch, channels, h=1, w=X] or [minibatch, channels, h=X, w=1] data
         // with a mask array of shape [minibatch, X]
 
         //If masking along height: broadcast dimensions are [0,2]
@@ -252,7 +247,7 @@ public class MaskedReductionUtil {
                     return out;
                 }
 
-                //Note that with CNNs, current design is restricted to [minibatch, depth, 1, W] ot [minibatch, depth, H, 1]
+                //Note that with CNNs, current design is restricted to [minibatch, channels, 1, W] ot [minibatch, channels, H, 1]
                 INDArray nEachTimeSeries = mask.sum(1); //[minibatchSize,tsLength] -> [minibatchSize,1]
                 Nd4j.getExecutioner().exec(new BroadcastDivOp(out, nEachTimeSeries, out, 0));
 
@@ -281,8 +276,6 @@ public class MaskedReductionUtil {
                 Nd4j.getExecutioner().exec(new BroadcastMulOp(numerator, mask, numerator, dimensions)); //Apply mask
 
                 return numerator;
-            case NONE:
-                throw new UnsupportedOperationException("NONE pooling type not supported");
             default:
                 throw new UnsupportedOperationException("Unknown or not supported pooling type: " + poolingType);
 

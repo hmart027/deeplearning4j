@@ -19,11 +19,19 @@ package org.deeplearning4j.nn.api.layers;
 import org.deeplearning4j.nn.api.Classifier;
 import org.deeplearning4j.nn.api.Layer;
 import org.nd4j.linalg.api.ndarray.INDArray;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 /**
  * Interface for output layers (those that calculate gradients with respect to a labels array)
  */
 public interface IOutputLayer extends Layer, Classifier {
+
+    /**
+     * Returns true if labels are required
+     * for this output layer
+     * @return true if this output layer needs labels or not
+     */
+    boolean needsLabels();
 
     /**
      * Set the labels array for this output layer
@@ -48,7 +56,7 @@ public interface IOutputLayer extends Layer, Classifier {
      *                      dropout, etc)
      * @return score (loss function)
      */
-    double computeScore(double fullNetworkL1, double fullNetworkL2, boolean training);
+    double computeScore(double fullNetworkL1, double fullNetworkL2, boolean training, LayerWorkspaceMgr workspaceMgr);
 
     /**
      * Compute the score for each example individually, after labels and input have been set.
@@ -57,7 +65,7 @@ public interface IOutputLayer extends Layer, Classifier {
      * @param fullNetworkL2 L2 regularization term for the entire network (or, 0.0 to not include regularization)
      * @return A column INDArray of shape [numExamples,1], where entry i is the score of the ith example
      */
-    INDArray computeScoreForExamples(double fullNetworkL1, double fullNetworkL2);
+    INDArray computeScoreForExamples(double fullNetworkL1, double fullNetworkL2, LayerWorkspaceMgr workspaceMgr);
 
 
 }

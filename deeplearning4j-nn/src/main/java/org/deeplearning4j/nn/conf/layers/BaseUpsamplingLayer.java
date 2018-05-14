@@ -23,16 +23,8 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import org.deeplearning4j.nn.api.ParamInitializer;
 import org.deeplearning4j.nn.conf.InputPreProcessor;
-import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.inputs.InputType;
-import org.deeplearning4j.nn.conf.memory.LayerMemoryReport;
-import org.deeplearning4j.nn.conf.memory.MemoryReport;
 import org.deeplearning4j.nn.params.EmptyParamInitializer;
-import org.deeplearning4j.optimize.api.IterationListener;
-import org.nd4j.linalg.api.ndarray.INDArray;
-
-import java.util.Collection;
-import java.util.Map;
 
 /**
  * Upsampling base layer
@@ -46,7 +38,7 @@ import java.util.Map;
 @EqualsAndHashCode(callSuper = true)
 public abstract class BaseUpsamplingLayer extends Layer {
 
-    protected int size;
+    protected int[] size;
 
     protected BaseUpsamplingLayer(UpsamplingBuilder builder) {
         super(builder);
@@ -100,9 +92,24 @@ public abstract class BaseUpsamplingLayer extends Layer {
     @NoArgsConstructor
     protected static abstract class UpsamplingBuilder<T extends UpsamplingBuilder<T>>
                     extends Layer.Builder<T> {
-        protected int size = 1;
+        protected int[] size = new int[] {1};
 
+        /**
+         * A single size integer is used for upsampling in all spatial dimensions
+         *
+         * @param size int for upsampling
+         */
         protected UpsamplingBuilder(int size) {
+            this.size = new int[] {size};
+        }
+
+        /**
+         * An int array to specify upsampling dimensions, the length of which has to equal to the number of
+         * spatial dimensions (e.g. 2 for Upsampling2D etc.)
+         *
+         * @param size int for upsampling
+         */
+        protected UpsamplingBuilder(int[] size) {
             this.size = size;
         }
     }

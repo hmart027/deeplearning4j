@@ -21,7 +21,7 @@ import org.deeplearning4j.nn.conf.layers.DenseLayer;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.graph.ComputationGraph;
 import org.deeplearning4j.nn.weights.WeightInit;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
 import org.deeplearning4j.spark.BaseSparkTest;
 import org.deeplearning4j.spark.api.Repartition;
@@ -92,7 +92,7 @@ public class TestSparkComputationGraph extends BaseSparkTest {
         TrainingMaster tm = new ParameterAveragingTrainingMaster(true, numExecutors(), 1, 10, 1, 0);
 
         SparkComputationGraph scg = new SparkComputationGraph(sc, cg, tm);
-        scg.setListeners(Collections.singleton((IterationListener) new ScoreIterationListener(1)));
+        scg.setListeners(Collections.singleton((TrainingListener) new ScoreIterationListener(1)));
 
         JavaRDD<MultiDataSet> rdd = sc.parallelize(list);
         scg.fitMultiDataSet(rdd);
@@ -191,7 +191,7 @@ public class TestSparkComputationGraph extends BaseSparkTest {
     public void testSeedRepeatability() throws Exception {
 
         ComputationGraphConfiguration conf = new NeuralNetConfiguration.Builder().seed(12345).updater(Updater.RMSPROP)
-                        .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).iterations(1)
+                        .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                         .weightInit(WeightInit.XAVIER).graphBuilder().addInputs("in")
                         .addLayer("0", new org.deeplearning4j.nn.conf.layers.DenseLayer.Builder().nIn(4).nOut(4)
                                         .activation(Activation.TANH).build(), "in")

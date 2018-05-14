@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.graph;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.ComputationGraphConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
@@ -20,6 +21,7 @@ import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.nd4j.linalg.learning.config.NoOp;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import java.util.Map;
 import java.util.Random;
@@ -27,7 +29,7 @@ import java.util.Random;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 
-public class TestVariableLengthTSCG {
+public class TestVariableLengthTSCG extends BaseDL4JTest {
 
     @Test
     public void testVariableLengthSimple() {
@@ -45,7 +47,7 @@ public class TestVariableLengthTSCG {
             Nd4j.getRandom().setSeed(12345);
 
             ComputationGraphConfiguration conf = new NeuralNetConfiguration.Builder()
-                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).iterations(1)
+                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                             .updater(new Sgd(0.1)).seed(12345).graphBuilder().addInputs("in")
                             .addLayer("0", new GravesLSTM.Builder().activation(Activation.TANH).nIn(2).nOut(2).build(),
                                             "in")
@@ -134,7 +136,7 @@ public class TestVariableLengthTSCG {
             Nd4j.getRandom().setSeed(12345);
 
             ComputationGraphConfiguration conf = new NeuralNetConfiguration.Builder()
-                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).iterations(1)
+                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                             .updater(new Sgd(0.1)).seed(12345).graphBuilder().addInputs("in")
                             .addLayer("0", new DenseLayer.Builder().activation(Activation.TANH).nIn(2).nOut(2).build(),
                                             "in")
@@ -206,6 +208,7 @@ public class TestVariableLengthTSCG {
                     in2.putScalar(new int[] {j, k, 4}, r.nextDouble());
                 }
                 net.setInput(0, in2);
+                net.setLayerMaskArrays(new INDArray[]{inputMask}, null);
                 net.computeGradientAndScore();
                 double score2a = net.score();
                 Gradient g2a = net.gradient();
@@ -224,8 +227,8 @@ public class TestVariableLengthTSCG {
             FeedForwardToRnnPreProcessor temp = new FeedForwardToRnnPreProcessor();
             INDArray l0Before = activations2.get("0");
             INDArray l1Before = activations2.get("1");
-            INDArray l0After = temp.preProcess(l0Before, nExamples);
-            INDArray l1After = temp.preProcess(l1Before, nExamples);
+            INDArray l0After = temp.preProcess(l0Before, nExamples, LayerWorkspaceMgr.noWorkspaces());
+            INDArray l1After = temp.preProcess(l1Before, nExamples, LayerWorkspaceMgr.noWorkspaces());
 
             for (int j = 0; j < nExamples; j++) {
                 for (int k = 0; k < nIn; k++) {

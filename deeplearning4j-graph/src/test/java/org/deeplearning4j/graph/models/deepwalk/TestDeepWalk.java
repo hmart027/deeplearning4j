@@ -12,7 +12,9 @@ import org.deeplearning4j.graph.iterator.parallel.WeightedRandomWalkGraphIterato
 import org.deeplearning4j.graph.models.GraphVectors;
 import org.deeplearning4j.graph.models.loader.GraphVectorSerializer;
 import org.deeplearning4j.graph.vertexfactory.StringVertexFactory;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.io.ClassPathResource;
@@ -26,7 +28,10 @@ import static org.junit.Assert.*;
 
 public class TestDeepWalk {
 
-    @Test
+    @Rule
+    public TemporaryFolder testDir = new TemporaryFolder();
+
+    @Test(timeout = 10000L)
     public void testBasic() throws IOException {
         //Very basic test. Load graph, build tree, call fit, make sure it doesn't throw any exceptions
 
@@ -64,7 +69,7 @@ public class TestDeepWalk {
         }
     }
 
-    @Test
+    @Test(timeout = 10000L)
     public void testParallel() {
 
         IGraph<String, String> graph = generateRandomGraph(1000, 10);
@@ -98,7 +103,7 @@ public class TestDeepWalk {
     }
 
 
-    @Test
+    @Test(timeout = 10000L)
     public void testVerticesNearest() {
 
         int nVertices = 20;
@@ -143,9 +148,9 @@ public class TestDeepWalk {
         }
     }
 
-    @Test
+    @Test(timeout = 10000L)
     public void testLoadingSaving() throws IOException {
-        String out = FilenameUtils.concat(System.getProperty("java.io.tmpdir"), "dl4jdwtestout.txt");
+        String out = "dl4jdwtestout.txt";
 
         int nVertices = 20;
         Graph<String, String> graph = generateRandomGraph(nVertices, 8);
@@ -158,10 +163,11 @@ public class TestDeepWalk {
 
         deepWalk.fit(graph, 10);
 
-        GraphVectorSerializer.writeGraphVectors(deepWalk, out);
+        File f = testDir.newFile(out);
+        GraphVectorSerializer.writeGraphVectors(deepWalk, f.getAbsolutePath());
 
         GraphVectors<String, String> vectors =
-                        (GraphVectors<String, String>) GraphVectorSerializer.loadTxtVectors(new File(out));
+                        (GraphVectors<String, String>) GraphVectorSerializer.loadTxtVectors(f);
 
         assertEquals(deepWalk.numVertices(), vectors.numVertices());
         assertEquals(deepWalk.getVectorSize(), vectors.getVectorSize());
@@ -179,7 +185,7 @@ public class TestDeepWalk {
         }
     }
 
-    @Test
+    @Test(timeout = 10000L)
     public void testDeepWalk13Vertices() throws IOException {
 
         int nVertices = 13;
@@ -213,7 +219,7 @@ public class TestDeepWalk {
             System.out.println(deepWalk.getVertexVector(i));
     }
 
-    @Test
+    @Test(timeout = 10000L)
     public void testDeepWalkWeightedParallel() throws IOException {
 
         //Load graph

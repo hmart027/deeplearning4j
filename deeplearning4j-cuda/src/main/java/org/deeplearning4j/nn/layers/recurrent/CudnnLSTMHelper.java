@@ -34,6 +34,8 @@ import org.nd4j.linalg.api.shape.Shape;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.jcublas.context.CudaContext;
 import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
+import org.deeplearning4j.nn.workspace.ArrayType;
 
 import java.util.Map;
 
@@ -147,11 +149,11 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
     }
 
     // These constants might eventually become variable parameters...
-    protected static final int numLayers = 1;
-    protected static final float dropout = 0;
-    protected static final boolean bidirectional = false;
-    protected static final int RNNMode = CUDNN_LSTM;
-    protected static final int numLinearLayers = 8; // CUDNN_LSTM
+    protected static final int NUM_LAYERS = 1;
+    protected static final float DROPOUT = 0;
+    protected static final boolean BIDIRECTIONAL = false;
+    protected static final int RNN_MODE = CUDNN_LSTM;
+    protected static final int NUM_LINEAR_LAYERS = 8; // CUDNN_LSTM
 
     private CudnnLSTMContext cudnnContext = new CudnnLSTMContext();
     private TensorArray xDesc = new TensorArray();
@@ -191,13 +193,14 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
 
     @Override
     public Pair<Gradient, INDArray> backpropGradient(final NeuralNetConfiguration conf,
-                    final IActivation gateActivationFn, final INDArray input, final INDArray recurrentWeights, //Shape: [hiddenLayerSize,4*hiddenLayerSize+3]; order: [wI,wF,wO,wG,wFF,wOO,wGG]
-                    final INDArray inputWeights, //Shape: [n^(L-1),4*hiddenLayerSize]; order: [wi,wf,wo,wg]
-                    final INDArray epsilon, final boolean truncatedBPTT, final int tbpttBackwardLength,
-                    final FwdPassReturn fwdPass, final boolean forwards, final String inputWeightKey,
-                    final String recurrentWeightKey, final String biasWeightKey,
-                    final Map<String, INDArray> gradientViews, INDArray maskArray, //Input mask: should only be used with bidirectional RNNs + variable length
-                    final boolean hasPeepholeConnections) { //True for GravesLSTM, false for LSTM
+                                                     final IActivation gateActivationFn, final INDArray input, final INDArray recurrentWeights, //Shape: [hiddenLayerSize,4*hiddenLayerSize+3]; order: [wI,wF,wO,wG,wFF,wOO,wGG]
+                                                     final INDArray inputWeights, //Shape: [n^(L-1),4*hiddenLayerSize]; order: [wi,wf,wo,wg]
+                                                     final INDArray epsilon, final boolean truncatedBPTT, final int tbpttBackwardLength,
+                                                     final FwdPassReturn fwdPass, final boolean forwards, final String inputWeightKey,
+                                                     final String recurrentWeightKey, final String biasWeightKey,
+                                                     final Map<String, INDArray> gradientViews, INDArray maskArray, //Input mask: should only be used with bidirectional RNNs + variable length
+                                                     final boolean hasPeepholeConnections, //True for GravesLSTM, false for LSTM
+                                                     final LayerWorkspaceMgr workspaceMgr) {
 
         //Expect errors to have shape: [miniBatchSize,n^(L+1),timeSeriesLength]
         int hiddenLayerSize = recurrentWeights.size(0); //i.e., n^L
@@ -209,7 +212,7 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
 
         INDArray x = toCOrder(input.permute(2, 0, 1));
         INDArray dy = toCOrder(epsilon.permute(2, 0, 1));
-        INDArray dx = Nd4j.createUninitialized(new int[] {timeSeriesLength, miniBatchSize, prevLayerSize}, 'c');
+        INDArray dx = workspaceMgr.createUninitialized(ArrayType.ACTIVATION_GRAD, new int[] {timeSeriesLength, miniBatchSize, prevLayerSize}, 'c');
 
         INDArray iwGradientsOut = gradientViews.get(inputWeightKey);
         INDArray rwGradientsOut = gradientViews.get(recurrentWeightKey); //Order: {I,F,O,G}
@@ -240,8 +243,8 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
         if (truncatedBPTT) {
             int endIdx = Math.max(0, timeSeriesLength - tbpttBackwardLength) * miniBatchSize * hiddenLayerSize;
             xData.position(endIdx * dataTypeSize);
-            dyData.position(endIdx * (bidirectional ? 2 : 1) * dataTypeSize);
-            outputActivationsData.position(endIdx * (bidirectional ? 2 : 1) * dataTypeSize);
+            dyData.position(endIdx * (BIDIRECTIONAL ? 2 : 1) * dataTypeSize);
+            outputActivationsData.position(endIdx * (BIDIRECTIONAL ? 2 : 1) * dataTypeSize);
             timeSeriesLength = Math.min(timeSeriesLength, tbpttBackwardLength);
         }
 
@@ -272,8 +275,8 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
         Pointer linLayerMat = new Pointer();
         Pointer linLayerBias = new Pointer();
 
-        for (int layer = 0; layer < numLayers * (bidirectional ? 2 : 1); layer++) {
-            for (int linLayerID = 0; linLayerID < numLinearLayers; linLayerID++) {
+        for (int layer = 0; layer < NUM_LAYERS * (BIDIRECTIONAL ? 2 : 1); layer++) {
+            for (int linLayerID = 0; linLayerID < NUM_LINEAR_LAYERS; linLayerID++) {
                 checkCudnn(cudnnGetRNNLinLayerMatrixParams(cudnnContext, cudnnContext.rnnDesc, layer, xDesc0,
                                 cudnnContext.wDesc, weightsSpace, linLayerID, cudnnContext.linLayerMatDesc,
                                 linLayerMat));
@@ -365,7 +368,8 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
                     final INDArray biases, //Shape: [4,hiddenLayerSize]; order: [bi,bf,bo,bg]^T
                     final boolean training, final INDArray prevOutputActivations, final INDArray prevMemCellState,
                     boolean forBackprop, boolean forwards, final String inputWeightKey, INDArray maskArray, //Input mask: should only be used with bidirectional RNNs + variable length
-                    final boolean hasPeepholeConnections) { //True for GravesLSTM, false for LSTM
+                    final boolean hasPeepholeConnections,   //True for GravesLSTM, false for LSTM
+                    final LayerWorkspaceMgr workspaceMgr) {
 
         boolean is2dInput = input.rank() < 3; //Edge case of T=1, may have shape [m,nIn], equiv. to [m,nIn,1]
         int timeSeriesLength = (is2dInput ? 1 : input.size(2));
@@ -381,8 +385,8 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
         INDArray prevAct = toCOrder(prevOutputActivations);
         INDArray prevMemCell = toCOrder(prevMemCellState);
 
-        INDArray outputActivations = Nd4j.createUninitialized(
-                        new int[] {timeSeriesLength, miniBatchSize, hiddenLayerSize * (bidirectional ? 2 : 1)}, 'c');
+        INDArray outputActivations = workspaceMgr.createUninitialized(ArrayType.ACTIVATIONS,
+                        new int[] {timeSeriesLength, miniBatchSize, hiddenLayerSize * (BIDIRECTIONAL ? 2 : 1)}, 'c');
         INDArray finalMemCellState = Nd4j.createUninitialized(
                         new int[] {/*numLayers * (bidirectional ? 2 : 1),*/ miniBatchSize, hiddenLayerSize}, 'c');
         INDArray finalStepActivations = Nd4j.createUninitialized(
@@ -420,14 +424,14 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
             checkCudnn(cudnnSetTensorNdDescriptor(xDesc.get(cudnnTensorStruct.class, i), dataType, 3, dimA, strideA));
             checkCudnn(cudnnSetTensorNdDescriptor(dxDesc.get(cudnnTensorStruct.class, i), dataType, 3, dimA, strideA));
 
-            int[] dimB = {miniBatchSize, hiddenLayerSize * (bidirectional ? 2 : 1), 1};
+            int[] dimB = {miniBatchSize, hiddenLayerSize * (BIDIRECTIONAL ? 2 : 1), 1};
             int[] strideB = {dimB[2] * dimB[1], dimB[2], 1};
 
             checkCudnn(cudnnSetTensorNdDescriptor(yDesc.get(cudnnTensorStruct.class, i), dataType, 3, dimB, strideB));
             checkCudnn(cudnnSetTensorNdDescriptor(dyDesc.get(cudnnTensorStruct.class, i), dataType, 3, dimB, strideB));
         }
 
-        int[] dimC = {numLayers * (bidirectional ? 2 : 1), miniBatchSize, hiddenLayerSize};
+        int[] dimC = {NUM_LAYERS * (BIDIRECTIONAL ? 2 : 1), miniBatchSize, hiddenLayerSize};
         int[] strideC = {dimC[2] * dimC[1], dimC[2], 1};
 
         checkCudnn(cudnnSetTensorNdDescriptor(cudnnContext.hxDesc, dataType, 3, dimC, strideC));
@@ -447,12 +451,12 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
         }
         stateSpace.limit(stateSize);
 
-        checkCudnn(cudnnSetDropoutDescriptor(cudnnContext.dropoutDesc, cudnnContext, dropout, stateSpace, stateSize,
+        checkCudnn(cudnnSetDropoutDescriptor(cudnnContext.dropoutDesc, cudnnContext, DROPOUT, stateSpace, stateSize,
                         Nd4j.getRandom().getSeed()));
 
-        checkCudnn(cudnnSetRNNDescriptor(cudnnContext.rnnDesc, hiddenLayerSize, numLayers, cudnnContext.dropoutDesc,
-                        CUDNN_LINEAR_INPUT, bidirectional ? CUDNN_BIDIRECTIONAL : CUDNN_UNIDIRECTIONAL, RNNMode,
-                        dataType));
+        checkCudnn(cudnnSetRNNDescriptor_v6(cudnnContext, cudnnContext.rnnDesc, hiddenLayerSize, NUM_LAYERS, cudnnContext.dropoutDesc,
+                         CUDNN_LINEAR_INPUT, BIDIRECTIONAL ? CUDNN_BIDIRECTIONAL : CUDNN_UNIDIRECTIONAL, RNN_MODE,
+                        CUDNN_RNN_ALGO_STANDARD, dataType));
 
         cudnnTensorStruct xDesc0 = xDesc.get(cudnnTensorStruct.class, 0);
         checkCudnn(cudnnGetRNNParamsSize(cudnnContext, cudnnContext.rnnDesc, xDesc0, sizeInBytes, dataType));
@@ -511,8 +515,8 @@ public class CudnnLSTMHelper extends BaseCudnnHelper implements LSTMHelper {
         Pointer linLayerMat = new Pointer();
         Pointer linLayerBias = new Pointer();
 
-        for (int layerNum = 0; layerNum < numLayers * (bidirectional ? 2 : 1); layerNum++) {
-            for (int linLayerID = 0; linLayerID < numLinearLayers; linLayerID++) {
+        for (int layerNum = 0; layerNum < NUM_LAYERS * (BIDIRECTIONAL ? 2 : 1); layerNum++) {
+            for (int linLayerID = 0; linLayerID < NUM_LINEAR_LAYERS; linLayerID++) {
                 checkCudnn(cudnnGetRNNLinLayerMatrixParams(cudnnContext, cudnnContext.rnnDesc, layerNum, xDesc0,
                                 cudnnContext.wDesc, weightsSpace, linLayerID, cudnnContext.linLayerMatDesc,
                                 linLayerMat));

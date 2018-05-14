@@ -31,7 +31,7 @@ public class TestStatsListener {
             DataSet ds = new IrisDataSetIterator(150, 150).next();
 
             MultiLayerConfiguration conf =
-                            new NeuralNetConfiguration.Builder().iterations(1)
+                            new NeuralNetConfiguration.Builder()
                                             .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                                             .list().layer(0,
                                                             new OutputLayer.Builder(LossFunctions.LossFunction.MCXENT)
@@ -44,9 +44,9 @@ public class TestStatsListener {
             StatsStorage ss = new MapDBStatsStorage(); //in-memory
 
             if (useJ7) {
-                net.setListeners(new J7StatsListener(ss));
+                net.setListeners(new J7StatsListener(ss, 1));
             } else {
-                net.setListeners(new StatsListener(ss));
+                net.setListeners(new StatsListener(ss, 1));
             }
 
 

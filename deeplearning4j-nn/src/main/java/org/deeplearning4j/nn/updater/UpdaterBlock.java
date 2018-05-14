@@ -5,6 +5,7 @@ import lombok.Data;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.BaseLayer;
+import org.deeplearning4j.nn.layers.FrozenLayer;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.NDArrayIndex;
@@ -132,7 +133,7 @@ public class UpdaterBlock {
         //Second: apply learning rate policy. Note that by definition we have the same LR policy for every single
         // variable in the block
         Layer l0 = layersAndVariablesInBlock.get(0).getLayer();
-        if (!(l0.conf().getLayer() instanceof BaseLayer)) {
+        if (l0.numParams() == 0) {
             //No params for this layer
             return;
         }
@@ -167,6 +168,13 @@ public class UpdaterBlock {
      * @param paramsView   Parameter view array for the layer + param
      */
     public void postApply(Layer layer, String paramName, INDArray gradientView, INDArray paramsView) {
+        if( layer instanceof FrozenLayer ){
+            //TODO this is a quick hack to fix https://github.com/deeplearning4j/deeplearning4j/issues/4250
+            //The underlying cause seems to be the whole NeuralNetConfiguration l1/l2ByParam maps and layer config separation
+            // which is being resolved in the upcoming PR here: https://github.com/deeplearning4j/deeplearning4j/pull/4050
+            return;
+        }
+
         NeuralNetConfiguration conf = layer.conf();
 
         //TODO: do this for multiple contiguous params/layers (fewer, larger ops)

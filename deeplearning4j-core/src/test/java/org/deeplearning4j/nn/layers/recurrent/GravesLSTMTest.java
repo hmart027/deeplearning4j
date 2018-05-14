@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.layers.recurrent;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
@@ -17,6 +18,7 @@ import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -26,7 +28,7 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 
-public class GravesLSTMTest {
+public class GravesLSTMTest extends BaseDL4JTest {
 
     @Test
     public void testLSTMGravesForwardBasic() {
@@ -50,19 +52,19 @@ public class GravesLSTMTest {
         //Output/activations has shape [miniBatchsize,nHiddenUnits,timeSeriesLength];
 
         INDArray dataSingleExampleTimeLength1 = Nd4j.ones(1, nIn, 1);
-        INDArray activations1 = layer.activate(dataSingleExampleTimeLength1);
+        INDArray activations1 = layer.activate(dataSingleExampleTimeLength1, false, LayerWorkspaceMgr.noWorkspaces());
         assertArrayEquals(activations1.shape(), new int[] {1, nHiddenUnits, 1});
 
         INDArray dataMultiExampleLength1 = Nd4j.ones(10, nIn, 1);
-        INDArray activations2 = layer.activate(dataMultiExampleLength1);
+        INDArray activations2 = layer.activate(dataMultiExampleLength1, false, LayerWorkspaceMgr.noWorkspaces());
         assertArrayEquals(activations2.shape(), new int[] {10, nHiddenUnits, 1});
 
         INDArray dataSingleExampleLength12 = Nd4j.ones(1, nIn, 12);
-        INDArray activations3 = layer.activate(dataSingleExampleLength12);
+        INDArray activations3 = layer.activate(dataSingleExampleLength12, false, LayerWorkspaceMgr.noWorkspaces());
         assertArrayEquals(activations3.shape(), new int[] {1, nHiddenUnits, 12});
 
         INDArray dataMultiExampleLength15 = Nd4j.ones(10, nIn, 15);
-        INDArray activations4 = layer.activate(dataMultiExampleLength15);
+        INDArray activations4 = layer.activate(dataMultiExampleLength15, false, LayerWorkspaceMgr.noWorkspaces());
         assertArrayEquals(activations4.shape(), new int[] {10, nHiddenUnits, 15});
     }
 
@@ -93,12 +95,12 @@ public class GravesLSTMTest {
         GravesLSTM lstm = (GravesLSTM) conf.getLayer().instantiate(conf, null, 0, params, true);
         lstm.setBackpropGradientsViewArray(Nd4j.create(1, conf.getLayer().initializer().numParams(conf)));
         //Set input, do a forward pass:
-        lstm.activate(inputData);
+        lstm.activate(inputData, false, LayerWorkspaceMgr.noWorkspaces());
         assertNotNull(lstm.input());
 
         INDArray epsilon = Nd4j.ones(miniBatchSize, lstmNHiddenUnits, timeSeriesLength);
 
-        Pair<Gradient, INDArray> out = lstm.backpropGradient(epsilon);
+        Pair<Gradient, INDArray> out = lstm.backpropGradient(epsilon, LayerWorkspaceMgr.noWorkspaces());
         Gradient outGradient = out.getFirst();
         INDArray nextEpsilon = out.getSecond();
 
@@ -143,17 +145,17 @@ public class GravesLSTMTest {
         INDArray params = Nd4j.create(1, numParams);
         GravesLSTM lstm = (GravesLSTM) conf.getLayer().instantiate(conf, null, 0, params, true);
         INDArray input = Nd4j.rand(new int[] {miniBatchSize, nIn, timeSeriesLength});
-        lstm.setInput(input);
+        lstm.setInput(input, LayerWorkspaceMgr.noWorkspaces());
 
         Method actHelper = GravesLSTM.class.getDeclaredMethod("activateHelper", boolean.class, INDArray.class,
-                        INDArray.class, boolean.class);
+                        INDArray.class, boolean.class, LayerWorkspaceMgr.class);
         actHelper.setAccessible(true);
 
         //Call activateHelper with both forBackprop == true, and forBackprop == false and compare
         Class<?> innerClass = Class.forName("org.deeplearning4j.nn.layers.recurrent.FwdPassReturn");
 
-        Object oFalse = actHelper.invoke(lstm, false, null, null, false); //GravesLSTM.FwdPassReturn object; want fwdPassOutput INDArray
-        Object oTrue = actHelper.invoke(lstm, false, null, null, true); //want fwdPassOutputAsArrays object
+        Object oFalse = actHelper.invoke(lstm, false, null, null, false, LayerWorkspaceMgr.noWorkspacesImmutable()); //GravesLSTM.FwdPassReturn object; want fwdPassOutput INDArray
+        Object oTrue = actHelper.invoke(lstm, false, null, null, true, LayerWorkspaceMgr.noWorkspacesImmutable()); //want fwdPassOutputAsArrays object
 
         Field fwdPassOutput = innerClass.getDeclaredField("fwdPassOutput");
         fwdPassOutput.setAccessible(true);
@@ -176,7 +178,7 @@ public class GravesLSTMTest {
         Nd4j.getRandom().setSeed(12345);
 
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
-                        .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).iterations(1)
+                        .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                         .updater(new Sgd(0.1)).seed(12345).list()
                         .layer(0, new org.deeplearning4j.nn.conf.layers.GravesLSTM.Builder().activation(Activation.TANH)
                                         .nIn(2).nOut(2).build())
@@ -233,7 +235,7 @@ public class GravesLSTMTest {
         for (String gateAfn : new String[] {"sigmoid", "hardsigmoid"}) {
 
             MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
-                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).iterations(1)
+                            .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                             .seed(12345).list()
                             .layer(0, new org.deeplearning4j.nn.conf.layers.GravesLSTM.Builder()
                                             .gateActivationFunction(gateAfn).activation(Activation.TANH).nIn(2).nOut(2)

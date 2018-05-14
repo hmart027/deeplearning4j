@@ -2,11 +2,13 @@ package org.deeplearning4j.nn.updater;
 
 
 import org.apache.commons.math3.util.FastMath;
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.Updater;
 import org.deeplearning4j.nn.conf.ComputationGraphConfiguration;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
+import org.deeplearning4j.nn.conf.layers.AutoEncoder;
 import org.deeplearning4j.nn.conf.layers.DenseLayer;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.conf.layers.variational.VariationalAutoencoder;
@@ -28,12 +30,13 @@ import org.nd4j.linalg.learning.*;
 import org.nd4j.linalg.learning.config.*;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 import org.nd4j.linalg.ops.transforms.Transforms;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import java.util.*;
 
 import static org.junit.Assert.*;
 
-public class TestUpdaters {
+public class TestUpdaters extends BaseDL4JTest {
 
     protected int nIn = 3;
     protected int nOut = 2;
@@ -89,7 +92,7 @@ public class TestUpdaters {
 
         int count = 0;
         for (int i = 0; i < 2; i++) {
-            updater.update(layer, gradient, i, 0, 1);
+            updater.update(layer, gradient, i, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
             // calculations for one iteration / update
 
@@ -153,7 +156,7 @@ public class TestUpdaters {
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.WEIGHT_KEY, wg);
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.BIAS_KEY, bg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         int count = 0;
         for (Map.Entry<String, INDArray> entry : gradientCopyPreUpdate.gradientForVariable().entrySet()) {
@@ -176,6 +179,7 @@ public class TestUpdaters {
         double beta2 = 0.888;
         double epsilon = Adam.DEFAULT_ADAM_EPSILON;
 
+
         NeuralNetConfiguration conf = new NeuralNetConfiguration.Builder().updater(new Adam(lr, beta1, beta2, Adam.DEFAULT_ADAM_EPSILON))
                 .layer(new DenseLayer.Builder().nIn(nIn).nOut(nOut).build())
                         .build();
@@ -189,7 +193,7 @@ public class TestUpdaters {
         INDArray updaterState = Nd4j.create(1, updaterStateSize);
         updater.setStateViewArray(layer, updaterState, true);
 
-        updater.update(layer, gradient, iteration, 0, 1);
+        updater.update(layer, gradient, iteration, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         double beta1t = FastMath.pow(beta1, iteration + 1);
         double beta2t = FastMath.pow(beta2, iteration + 1);
@@ -236,9 +240,9 @@ public class TestUpdaters {
         double epsilon = Nadam.DEFAULT_NADAM_EPSILON;
 
         NeuralNetConfiguration conf =
-                new NeuralNetConfiguration.Builder().iterations(iteration)
+                new NeuralNetConfiguration.Builder()
                         .layer(new DenseLayer.Builder().nIn(nIn).nOut(nOut)
-                                .updater(new Nadam.Builder().learningRate(lr).beta1(beta1)
+                                .updater(Nadam.builder().learningRate(lr).beta1(beta1)
                                         .beta2(beta2).epsilon(epsilon).build())
                                 .build())
                         .build();
@@ -256,7 +260,7 @@ public class TestUpdaters {
         /*
         * Making update for layer
         * */
-        updater.update(layer, gradient, iteration, 0,1);
+        updater.update(layer, gradient, iteration, 0,1, LayerWorkspaceMgr.noWorkspaces());
 
         double beta1t = FastMath.pow(beta1, iteration + 1);
 
@@ -342,7 +346,7 @@ public class TestUpdaters {
         INDArray updaterState = Nd4j.create(1, updaterStateSize);
         updater.setStateViewArray(layer, updaterState, true);
 
-        updater.update(layer, gradient, iteration, 0, 1);
+        updater.update(layer, gradient, iteration, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         double beta1t = FastMath.pow(beta1, iteration + 1);
         double beta2t = FastMath.pow(beta2, iteration + 1);
@@ -405,7 +409,7 @@ public class TestUpdaters {
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.WEIGHT_KEY, wg);
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.BIAS_KEY, bg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         int count = 0;
         for (Map.Entry<String, INDArray> entry : gradientCopyPreUpdate.gradientForVariable().entrySet()) {
@@ -453,7 +457,7 @@ public class TestUpdaters {
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.WEIGHT_KEY, wg);
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.BIAS_KEY, bg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         double epsilon = 1e-8;
 
@@ -496,7 +500,7 @@ public class TestUpdaters {
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.WEIGHT_KEY, wg);
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.BIAS_KEY, bg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         for (Map.Entry<String, INDArray> entry : gradientCopyPreUpdate.gradientForVariable().entrySet()) {
             val = entry.getValue();
@@ -534,7 +538,7 @@ public class TestUpdaters {
         gradient.gradientForVariable().put(DefaultParamInitializer.WEIGHT_KEY, wg);
         gradient.gradientForVariable().put(DefaultParamInitializer.BIAS_KEY, bg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         INDArray weightGradActual = gradient.getGradientFor(DefaultParamInitializer.WEIGHT_KEY);
         INDArray biasGradActual = gradient.getGradientFor(DefaultParamInitializer.BIAS_KEY);
@@ -635,7 +639,7 @@ public class TestUpdaters {
                 }
             }
 
-            updater.update(net, gradient, i, 0, 1);
+            updater.update(net, gradient, i, 0, 1, LayerWorkspaceMgr.noWorkspaces());
             assertEquals(gradient.gradientForVariable(), expectedGradient);
         }
     }
@@ -719,7 +723,7 @@ public class TestUpdaters {
 
 
         NeuralNetConfiguration conf = new NeuralNetConfiguration.Builder().updater(new Sgd(lr)).seed(42)
-                        .layer(new org.deeplearning4j.nn.conf.layers.RBM.Builder()
+                        .layer(new AutoEncoder.Builder()
                                         .lossFunction(LossFunctions.LossFunction.COSINE_PROXIMITY)
                                         .activation(Activation.IDENTITY).nIn(nIn).nOut(nOut).build())
                         .build();
@@ -739,7 +743,7 @@ public class TestUpdaters {
         gradientCopyPreUpdate.setGradientFor(DefaultParamInitializer.BIAS_KEY, bg);
         gradientCopyPreUpdate.setGradientFor(PretrainParamInitializer.VISIBLE_BIAS_KEY, vbg);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         for (Map.Entry<String, INDArray> entry : gradientCopyPreUpdate.gradientForVariable().entrySet()) {
             val = entry.getValue();
@@ -776,7 +780,7 @@ public class TestUpdaters {
         layer.setBackpropGradientsViewArray(gradients);
         updater = UpdaterCreator.getUpdater(layer);
 
-        updater.update(layer, gradient, -1, 0, 1);
+        updater.update(layer, gradient, -1, 0, 1, LayerWorkspaceMgr.noWorkspaces());
 
         for (Map.Entry<String, INDArray> entry : gradientCopyPreUpdate.gradientForVariable().entrySet()) {
             //            System.out.println(entry.getKey());

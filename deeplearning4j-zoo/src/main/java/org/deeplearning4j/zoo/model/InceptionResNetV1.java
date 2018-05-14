@@ -1,13 +1,13 @@
 package org.deeplearning4j.zoo.model;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.NoArgsConstructor;
 import org.deeplearning4j.nn.api.Model;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
-import org.deeplearning4j.nn.conf.ComputationGraphConfiguration;
-import org.deeplearning4j.nn.conf.ConvolutionMode;
-import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
-import org.deeplearning4j.nn.conf.WorkspaceMode;
+import org.deeplearning4j.nn.conf.*;
 import org.deeplearning4j.nn.conf.distribution.NormalDistribution;
+import org.deeplearning4j.nn.conf.distribution.TruncatedNormalDistribution;
 import org.deeplearning4j.nn.conf.graph.L2NormalizeVertex;
 import org.deeplearning4j.nn.conf.graph.MergeVertex;
 import org.deeplearning4j.nn.conf.inputs.InputType;
@@ -20,6 +20,7 @@ import org.deeplearning4j.zoo.ZooModel;
 import org.deeplearning4j.zoo.ZooType;
 import org.deeplearning4j.zoo.model.helper.InceptionResNetHelper;
 import org.nd4j.linalg.activations.Activation;
+import org.nd4j.linalg.learning.config.IUpdater;
 import org.nd4j.linalg.learning.config.RmsProp;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
@@ -30,28 +31,19 @@ import org.nd4j.linalg.lossfunctions.LossFunctions;
  *
  * Revised and consolidated version by @crockpotveggies
  */
-@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class InceptionResNetV1 extends ZooModel {
 
-    private int[] inputShape = new int[] {3, 160, 160};
-    private long seed;
-    private int iterations;
-    private int numClasses;
-    private WorkspaceMode workspaceMode;
-    private ConvolutionLayer.AlgoMode cudnnAlgoMode;
+    @Builder.Default private long seed = 1234;
+    @Builder.Default private int[] inputShape = new int[] {3, 160, 160};
+    @Builder.Default private int numClasses = 0;
+    @Builder.Default private IUpdater updater = new RmsProp(0.1, 0.96, 0.001);
+    @Builder.Default private CacheMode cacheMode = CacheMode.NONE;
+    @Builder.Default private WorkspaceMode workspaceMode = WorkspaceMode.ENABLED;
+    @Builder.Default private ConvolutionLayer.AlgoMode cudnnAlgoMode = ConvolutionLayer.AlgoMode.PREFER_FASTEST;
 
-    public InceptionResNetV1(int numLabels, long seed, int iterations) {
-        this(numLabels, seed, iterations, WorkspaceMode.SEPARATE);
-    }
-
-    public InceptionResNetV1(int outputNum, long seed, int iterations, WorkspaceMode workspaceMode) {
-        this.seed = seed;
-        this.numClasses = outputNum;
-        this.iterations = iterations;
-        this.workspaceMode = workspaceMode;
-        this.cudnnAlgoMode = workspaceMode == WorkspaceMode.SINGLE ? ConvolutionLayer.AlgoMode.PREFER_FASTEST
-                        : ConvolutionLayer.AlgoMode.NO_WORKSPACE;
-    }
+    private InceptionResNetV1() {}
 
     @Override
     public String pretrainedUrl(PretrainedType pretrainedType) {
@@ -61,11 +53,6 @@ public class InceptionResNetV1 extends ZooModel {
     @Override
     public long pretrainedChecksum(PretrainedType pretrainedType) {
         return 0L;
-    }
-
-    @Override
-    public ZooType zooType() {
-        return ZooType.INCEPTIONRESNETV1;
     }
 
     @Override
@@ -103,10 +90,15 @@ public class InceptionResNetV1 extends ZooModel {
     public ComputationGraphConfiguration.GraphBuilder graphBuilder(String input) {
 
         ComputationGraphConfiguration.GraphBuilder graph = new NeuralNetConfiguration.Builder().seed(seed)
-                        .iterations(iterations).activation(Activation.RELU)
+                        .activation(Activation.RELU)
                         .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
-                        .updater(new RmsProp(0.1, 0.96, 0.001)).weightInit(WeightInit.DISTRIBUTION)
-                        .dist(new NormalDistribution(0.0, 0.5)).l2(5e-5).miniBatch(true)
+                        .updater(updater)
+                        .weightInit(new TruncatedNormalDistribution(0.0, 0.5))
+                        .l2(5e-5)
+                        .miniBatch(true)
+                        .cacheMode(cacheMode)
+                        .trainingWorkspaceMode(workspaceMode)
+                        .inferenceWorkspaceMode(workspaceMode)
                         .convolutionMode(ConvolutionMode.Truncate).graphBuilder();
 
 
@@ -115,7 +107,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("stem-cnn1",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2})
                                                         .nIn(inputShape[0]).nOut(32)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         input)
                         .addLayer("stem-batch1",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(32).nOut(32)
@@ -123,7 +115,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "stem-cnn1")
                         .addLayer("stem-cnn2",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}).nIn(32).nOut(32)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "stem-batch1")
                         .addLayer("stem-batch2",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(32).nOut(32)
@@ -132,7 +124,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("stem-cnn3",
                                         new ConvolutionLayer.Builder(new int[] {3, 3})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(32).nOut(64)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "stem-batch2")
                         .addLayer("stem-batch3", new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(64)
                                         .nOut(64).build(), "stem-cnn3")
@@ -142,7 +134,7 @@ public class InceptionResNetV1 extends ZooModel {
 
                         .addLayer("stem-cnn5",
                                         new ConvolutionLayer.Builder(new int[] {1, 1}).nIn(64).nOut(80)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "stem-pool4")
                         .addLayer("stem-batch5",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(80).nOut(80)
@@ -150,7 +142,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "stem-cnn5")
                         .addLayer("stem-cnn6",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}).nIn(80).nOut(128)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "stem-batch5")
                         .addLayer("stem-batch6",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(128).nOut(128)
@@ -158,7 +150,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "stem-cnn6")
                         .addLayer("stem-cnn7",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(128)
-                                                        .nOut(192).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(192).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "stem-batch6")
                         .addLayer("stem-batch7", new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(192)
@@ -174,7 +166,7 @@ public class InceptionResNetV1 extends ZooModel {
                         // 3x3
                         .addLayer("reduceA-cnn1",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(192)
-                                                        .nOut(192).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(192).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "resnetA")
                         .addLayer("reduceA-batch1",
@@ -185,7 +177,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceA-cnn2",
                                         new ConvolutionLayer.Builder(new int[] {1, 1})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(192).nOut(128)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "resnetA")
                         .addLayer("reduceA-batch2",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(128).nOut(128)
@@ -194,7 +186,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceA-cnn3",
                                         new ConvolutionLayer.Builder(new int[] {3, 3})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(128).nOut(128)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "reduceA-batch2")
                         .addLayer("reduceA-batch3",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(128).nOut(128)
@@ -202,7 +194,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "reduceA-cnn3")
                         .addLayer("reduceA-cnn4",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(128)
-                                                        .nOut(192).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(192).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "reduceA-batch3")
                         .addLayer("reduceA-batch4",
@@ -233,7 +225,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceB-cnn2",
                                         new ConvolutionLayer.Builder(new int[] {1, 1})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(576).nOut(256)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "resnetB")
                         .addLayer("reduceB-batch1",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(256).nOut(256)
@@ -241,7 +233,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "reduceB-cnn2")
                         .addLayer("reduceB-cnn3",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(256)
-                                                        .nOut(256).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(256).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "reduceB-batch1")
                         .addLayer("reduceB-batch2",
@@ -252,7 +244,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceB-cnn4",
                                         new ConvolutionLayer.Builder(new int[] {1, 1})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(576).nOut(256)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "resnetB")
                         .addLayer("reduceB-batch3",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(256).nOut(256)
@@ -260,7 +252,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "reduceB-cnn4")
                         .addLayer("reduceB-cnn5",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(256)
-                                                        .nOut(256).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(256).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "reduceB-batch3")
                         .addLayer("reduceB-batch4",
@@ -271,7 +263,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceB-cnn6",
                                         new ConvolutionLayer.Builder(new int[] {1, 1})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(576).nOut(256)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "resnetB")
                         .addLayer("reduceB-batch5",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(256).nOut(256)
@@ -280,7 +272,7 @@ public class InceptionResNetV1 extends ZooModel {
                         .addLayer("reduceB-cnn7",
                                         new ConvolutionLayer.Builder(new int[] {3, 3})
                                                         .convolutionMode(ConvolutionMode.Same).nIn(256).nOut(256)
-                                                        .cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE).build(),
+                                                        .cudnnAlgoMode(cudnnAlgoMode).build(),
                                         "reduceB-batch5")
                         .addLayer("reduceB-batch6",
                                         new BatchNormalization.Builder(false).decay(0.995).eps(0.001).nIn(256).nOut(256)
@@ -288,7 +280,7 @@ public class InceptionResNetV1 extends ZooModel {
                                         "reduceB-cnn7")
                         .addLayer("reduceB-cnn8",
                                         new ConvolutionLayer.Builder(new int[] {3, 3}, new int[] {2, 2}).nIn(256)
-                                                        .nOut(256).cudnnAlgoMode(ConvolutionLayer.AlgoMode.NO_WORKSPACE)
+                                                        .nOut(256).cudnnAlgoMode(cudnnAlgoMode)
                                                         .build(),
                                         "reduceB-batch6")
                         .addLayer("reduceB-batch7",

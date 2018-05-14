@@ -43,8 +43,7 @@ public class ParallelTransformerIterator extends BasicTransformerIterator {
         this.allowMultithreading = allowMultithreading;
         this.stringBuffer = new LinkedBlockingQueue<>(512);
 
-        threads = new TokenizerThread[allowMultithreading ? Math.max(Runtime.getRuntime().availableProcessors() / 2, 2)
-                        : 1];
+        threads = new TokenizerThread[allowMultithreading ? Math.max(Runtime.getRuntime().availableProcessors(), 2) : 1];
 
         try {
             int cnt = 0;
@@ -98,7 +97,7 @@ public class ParallelTransformerIterator extends BasicTransformerIterator {
         else
             underlyingHas = false;
 
-        return (underlyingHas || buffer.size() > 0 || stringBuffer.size() > 0 || processing.get() > 0);
+        return (underlyingHas || !buffer.isEmpty() || !stringBuffer.isEmpty() || processing.get() > 0);
     }
 
     @Override
@@ -159,6 +158,7 @@ public class ParallelTransformerIterator extends BasicTransformerIterator {
                     processing.decrementAndGet();
                 }
             } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 // do nothing
                 shutdown();
             } catch (Exception e) {

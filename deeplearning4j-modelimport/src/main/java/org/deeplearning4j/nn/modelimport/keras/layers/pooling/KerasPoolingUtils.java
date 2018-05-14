@@ -31,20 +31,22 @@ public class KerasPoolingUtils {
     /**
      * Map Keras pooling layers to DL4J pooling types.
      *
-     * @param className
-     * @return
-     * @throws UnsupportedKerasConfigurationException
+     * @param className name of the Keras pooling class
+     * @return DL4J pooling type
+     * @throws UnsupportedKerasConfigurationException Unsupported Keras config
      */
     public static PoolingType mapPoolingType(String className, KerasLayerConfiguration conf)
             throws UnsupportedKerasConfigurationException {
         PoolingType poolingType;
         if (className.equals(conf.getLAYER_CLASS_NAME_MAX_POOLING_2D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_MAX_POOLING_1D()) ||
+                className.equals(conf.getLAYER_CLASS_NAME_MAX_POOLING_3D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_GLOBAL_MAX_POOLING_1D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_GLOBAL_MAX_POOLING_2D())) {
             poolingType = PoolingType.MAX;
         } else if (className.equals(conf.getLAYER_CLASS_NAME_AVERAGE_POOLING_2D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_AVERAGE_POOLING_1D()) ||
+                className.equals(conf.getLAYER_CLASS_NAME_AVERAGE_POOLING_3D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_GLOBAL_AVERAGE_POOLING_1D()) ||
                 className.equals(conf.getLAYER_CLASS_NAME_GLOBAL_AVERAGE_POOLING_2D())) {
             poolingType = PoolingType.AVG;
@@ -57,9 +59,9 @@ public class KerasPoolingUtils {
     /**
      * Map Keras pooling layers to DL4J pooling dimensions.
      *
-     * @param className
-     * @return
-     * @throws UnsupportedKerasConfigurationException
+     * @param className name of the Keras pooling class
+     * @return pooling dimensions as int array
+     * @throws UnsupportedKerasConfigurationException Unsupported Keras config
      */
     public static int[] mapPoolingDimensions(String className, KerasLayerConfiguration conf)
             throws UnsupportedKerasConfigurationException {

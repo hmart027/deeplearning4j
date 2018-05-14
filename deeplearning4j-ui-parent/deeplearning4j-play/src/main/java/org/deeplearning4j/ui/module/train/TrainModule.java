@@ -16,6 +16,7 @@ import org.deeplearning4j.nn.conf.layers.*;
 import org.deeplearning4j.nn.weights.WeightInit;
 import org.deeplearning4j.ui.api.*;
 import org.deeplearning4j.ui.i18n.I18NProvider;
+import org.deeplearning4j.ui.i18n.I18NResource;
 import org.deeplearning4j.ui.stats.StatsListener;
 import org.deeplearning4j.ui.stats.api.Histogram;
 import org.deeplearning4j.ui.stats.api.StatsInitializationReport;
@@ -26,13 +27,16 @@ import org.deeplearning4j.ui.views.html.training.TrainingModel;
 import org.deeplearning4j.ui.views.html.training.TrainingOverview;
 import org.deeplearning4j.ui.views.html.training.TrainingSystem;
 import org.eclipse.collections.impl.list.mutable.primitive.LongArrayList;
+import org.nd4j.linalg.io.ClassPathResource;
 import org.nd4j.linalg.learning.config.IUpdater;
 import org.nd4j.linalg.primitives.Pair;
 import org.nd4j.linalg.primitives.Triple;
+import org.nd4j.shade.jackson.databind.ObjectMapper;
 import play.libs.Json;
 import play.mvc.Result;
 import play.mvc.Results;
 
+import java.io.File;
 import java.text.DateFormat;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
@@ -54,6 +58,8 @@ public class TrainModule implements UIModule {
     public static final String CHART_MAX_POINTS_PROPERTY = "org.deeplearning4j.ui.maxChartPoints";
     private static final DecimalFormat df2 = new DecimalFormat("#.00");
     private static DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private enum ModelType {
         MLN, CG, Layer
@@ -173,7 +179,7 @@ public class TrainModule implements UIModule {
         String sessionID = null;
         for (Map.Entry<String, StatsStorage> entry : knownSessionIDs.entrySet()) {
             List<Persistable> staticInfos = entry.getValue().getAllStaticInfos(entry.getKey(), StatsListener.TYPE_ID);
-            if (staticInfos == null || staticInfos.size() == 0)
+            if (staticInfos == null || staticInfos.isEmpty())
                 continue;
             Persistable p = staticInfos.get(0);
             long thisTime = p.getTimeStamp();
@@ -229,7 +235,7 @@ public class TrainModule implements UIModule {
     }
 
     private Result listSessions() {
-        return Results.ok(Json.toJson(knownSessionIDs.keySet()));
+        return Results.ok(asJson(knownSessionIDs.keySet())).as("application/json");
     }
 
     private Result sessionInfo() {
@@ -265,7 +271,7 @@ public class TrainModule implements UIModule {
             }
 
             //Model info: type, # layers, # params...
-            if (staticInfo != null && staticInfo.size() > 0) {
+            if (staticInfo != null && !staticInfo.isEmpty()) {
                 StatsInitializationReport sr = (StatsInitializationReport) staticInfo.get(0);
                 String modelClassName = sr.getModelClassName();
                 if (modelClassName.endsWith("MultiLayerNetwork")) {
@@ -288,7 +294,7 @@ public class TrainModule implements UIModule {
             dataEachSession.put(sid, dataThisSession);
         }
 
-        return ok(Json.toJson(dataEachSession));
+        return Results.ok(asJson(dataEachSession)).as("application/json");
     }
 
     private Result setSession(String newSessionID) {
@@ -322,7 +328,7 @@ public class TrainModule implements UIModule {
     }
 
     private static void cleanLegacyIterationCounts(List<Integer> iterationCounts) {
-        if (iterationCounts.size() > 0) {
+        if (!iterationCounts.isEmpty()) {
             boolean allEqual = true;
             int maxStepSize = 1;
             int first = iterationCounts.get(0);
@@ -392,7 +398,7 @@ public class TrainModule implements UIModule {
             //Don't subsample
             updates = ss.getAllUpdatesAfter(currentSessionID, StatsListener.TYPE_ID, wid, 0);
         }
-        if (updates == null || updates.size() == 0) {
+        if (updates == null || updates.isEmpty()) {
             noData = true;
         }
 
@@ -593,7 +599,7 @@ public class TrainModule implements UIModule {
 
         result.put("model", modelInfo);
 
-        return Results.ok(Json.toJson(result));
+        return Results.ok(asJson(result)).as("application/json");
     }
 
     private Result getModelGraph() {
@@ -604,14 +610,14 @@ public class TrainModule implements UIModule {
         List<Persistable> allStatic = (noData ? Collections.EMPTY_LIST
                         : ss.getAllStaticInfos(currentSessionID, StatsListener.TYPE_ID));
 
-        if (allStatic.size() == 0) {
+        if (allStatic.isEmpty()) {
             return ok();
         }
 
         TrainModuleUtils.GraphInfo gi = getGraphInfo();
         if (gi == null)
             return ok();
-        return ok(Json.toJson(gi));
+        return Results.ok(asJson(gi)).as("application/json");
     }
 
     private TrainModuleUtils.GraphInfo getGraphInfo() {
@@ -636,7 +642,7 @@ public class TrainModule implements UIModule {
         StatsStorage ss = (noData ? null : knownSessionIDs.get(currentSessionID));
         List<Persistable> allStatic = (noData ? Collections.EMPTY_LIST
                         : ss.getAllStaticInfos(currentSessionID, StatsListener.TYPE_ID));
-        if (allStatic.size() == 0)
+        if (allStatic.isEmpty())
             return null;
 
         StatsInitializationReport p = (StatsInitializationReport) allStatic.get(0);
@@ -688,12 +694,12 @@ public class TrainModule implements UIModule {
 
         Triple<MultiLayerConfiguration, ComputationGraphConfiguration, NeuralNetConfiguration> conf = getConfig();
         if (conf == null) {
-            return ok(Json.toJson(result));
+            return Results.ok(asJson(result)).as("application/json");
         }
 
         TrainModuleUtils.GraphInfo gi = getGraphInfo();
         if (gi == null) {
-            return ok(Json.toJson(result));
+            return Results.ok(asJson(result)).as("application/json");
         }
 
 
@@ -776,7 +782,7 @@ public class TrainModule implements UIModule {
         result.put("learningRates", lrs);
 
         //Parameters histogram data
-        Persistable lastUpdate = (updates != null && updates.size() > 0 ? updates.get(updates.size() - 1) : null);
+        Persistable lastUpdate = (updates != null && !updates.isEmpty() ? updates.get(updates.size() - 1) : null);
         Map<String, Object> paramHistograms = getHistograms(layerIdx, gi, StatsType.Parameters, lastUpdate);
         result.put("paramHist", paramHistograms);
 
@@ -784,7 +790,7 @@ public class TrainModule implements UIModule {
         Map<String, Object> updateHistograms = getHistograms(layerIdx, gi, StatsType.Updates, lastUpdate);
         result.put("updateHist", updateHistograms);
 
-        return ok(Json.toJson(result));
+        return Results.ok(asJson(result)).as("application/json");
     }
 
     public Result getSystemData() {
@@ -807,7 +813,7 @@ public class TrainModule implements UIModule {
 
 
         long lastUpdateTime = -1;
-        if (latestUpdates == null || latestUpdates.size() == 0) {
+        if (latestUpdates == null || latestUpdates.isEmpty()) {
             noData = true;
         } else {
             for (Persistable p : latestUpdates) {
@@ -828,8 +834,7 @@ public class TrainModule implements UIModule {
         ret.put("hardware", hwSwInfo.getFirst());
         ret.put("software", hwSwInfo.getSecond());
 
-
-        return ok(Json.toJson(ret));
+        return Results.ok(asJson(ret)).as("application/json");
     }
 
     private static String getLayerType(Layer layer) {
@@ -1235,7 +1240,7 @@ public class TrainModule implements UIModule {
                         //MLN or CG parameter naming convention
                         paramName = s.substring(layerName.length() + 1);
                     } else {
-                        //Pretrain layer (VAE, RBM) naming convention
+                        //Pretrain layer (VAE, AE) naming convention
                         paramName = s.substring(layerName.length());
                     }
 
@@ -1500,5 +1505,32 @@ public class TrainModule implements UIModule {
         private Map<String, List<Double>> ratios;
         private Map<String, List<Double>> paramMM;
         private Map<String, List<Double>> updateMM;
+    }
+
+
+    private static final String asJson(Object o){
+        try{
+            return JSON.writeValueAsString(o);
+        } catch (Exception e){
+            throw new RuntimeException(e);
+        }
+    }
+
+
+    @Override
+    public List<I18NResource> getInternationalizationResources() {
+        List<I18NResource> files = new ArrayList<>();
+        String[] langs = new String[]{"de", "en", "ja", "ko", "ru", "zh"};
+        addAll(files, "train", langs);
+        addAll(files, "train.model", langs);
+        addAll(files, "train.overview", langs);
+        addAll(files, "train.system", langs);
+        return files;
+    }
+
+    private static void addAll(List<I18NResource> to, String prefix, String... suffixes){
+        for(String s : suffixes){
+            to.add(new I18NResource("dl4j_i18n/" + prefix + "." + s));
+        }
     }
 }

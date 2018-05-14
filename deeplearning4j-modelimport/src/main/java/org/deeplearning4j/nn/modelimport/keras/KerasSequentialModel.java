@@ -50,16 +50,16 @@ public class KerasSequentialModel extends KerasModel {
     /**
      * (Recommended) Builder-pattern constructor for Sequential model.
      *
-     * @param modelBuilder    builder object
-     * @throws IOException I/O exception
-     * @throws InvalidKerasConfigurationException Invalid Keras configuration
+     * @param modelBuilder builder object
+     * @throws IOException                            I/O exception
+     * @throws InvalidKerasConfigurationException     Invalid Keras configuration
      * @throws UnsupportedKerasConfigurationException Unsupported Keras configuration
      */
     public KerasSequentialModel(KerasModelBuilder modelBuilder)
             throws UnsupportedKerasConfigurationException, IOException, InvalidKerasConfigurationException {
         this(modelBuilder.getModelJson(), modelBuilder.getModelYaml(), modelBuilder.getWeightsArchive(),
                 modelBuilder.getWeightsRoot(), modelBuilder.getTrainingJson(), modelBuilder.getTrainingArchive(),
-                modelBuilder.isEnforceTrainingConfig());
+                modelBuilder.isEnforceTrainingConfig(), modelBuilder.getInputShape());
     }
 
     /**
@@ -69,17 +69,19 @@ public class KerasSequentialModel extends KerasModel {
      * (e.g., unknown regularizers) will throw Exceptions. When enforceTrainingConfig=false, these
      * will generate warnings but will be otherwise ignored.
      *
-     * @param modelJson       model configuration JSON string
-     * @param modelYaml       model configuration YAML string
-     * @param trainingJson    training configuration JSON string
-     * @throws IOException    I/O exception
+     * @param modelJson    model configuration JSON string
+     * @param modelYaml    model configuration YAML string
+     * @param trainingJson training configuration JSON string
+     * @throws IOException I/O exception
      */
     public KerasSequentialModel(String modelJson, String modelYaml, Hdf5Archive weightsArchive, String weightsRoot,
-                                String trainingJson, Hdf5Archive trainingArchive, boolean enforceTrainingConfig)
+                                String trainingJson, Hdf5Archive trainingArchive, boolean enforceTrainingConfig,
+                                int[] inputShape)
             throws IOException, InvalidKerasConfigurationException, UnsupportedKerasConfigurationException {
 
         Map<String, Object> modelConfig = KerasModelUtils.parseModelConfig(modelJson, modelYaml);
         this.kerasMajorVersion = KerasModelUtils.determineKerasMajorVersion(modelConfig, config);
+        this.kerasBackend = KerasModelUtils.determineKerasBackend(modelConfig, config);
         this.enforceTrainingConfig = enforceTrainingConfig;
 
         /* Determine model configuration type. */
@@ -102,8 +104,8 @@ public class KerasSequentialModel extends KerasModel {
             inputLayer = this.layersOrdered.get(0);
         } else {
             /* Add placeholder input layer and update lists of input and output layers. */
-            int[] inputShape = this.layersOrdered.get(0).getInputShape();
-            inputLayer = new KerasInput("input1", inputShape);
+            int[] firstLayerInputShape = this.layersOrdered.get(0).getInputShape();
+            inputLayer = new KerasInput("input1", firstLayerInputShape);
             inputLayer.setDimOrder(this.layersOrdered.get(0).getDimOrder());
             this.layers.put(inputLayer.getLayerName(), inputLayer);
             this.layersOrdered.add(0, inputLayer);
@@ -121,15 +123,20 @@ public class KerasSequentialModel extends KerasModel {
         }
 
         /* Import training configuration. */
-        if (trainingJson != null && enforceTrainingConfig)
-            importTrainingConfiguration(trainingJson);
-
+        if (enforceTrainingConfig) {
+            if (trainingJson != null)
+                importTrainingConfiguration(trainingJson);
+            else log.warn("If enforceTrainingConfig is true, a training " +
+                    "configuration object has to be provided. Usually the only practical way to do this is to store" +
+                    " your keras model with `model.save('model_path.h5'. If you store model config and weights" +
+                    " separately no training configuration is attached.");
+        }
         /* Infer output types for each layer. */
-        inferOutputTypes();
+        inferOutputTypes(inputShape);
 
         /* Store weights in layers. */
         if (weightsArchive != null)
-            KerasModelUtils.importWeights(weightsArchive, weightsRoot, layers);
+            KerasModelUtils.importWeights(weightsArchive, weightsRoot, layers, kerasMajorVersion, kerasBackend);
     }
 
     public KerasSequentialModel() {
@@ -139,7 +146,7 @@ public class KerasSequentialModel extends KerasModel {
     /**
      * Configure a MultiLayerConfiguration from this Keras Sequential model configuration.
      *
-     * @return          MultiLayerConfiguration
+     * @return MultiLayerConfiguration
      */
     public MultiLayerConfiguration getMultiLayerConfiguration()
             throws InvalidKerasConfigurationException, UnsupportedKerasConfigurationException {
@@ -180,9 +187,11 @@ public class KerasSequentialModel extends KerasModel {
                         listBuilder.inputPreProcessor(layerIndex, preprocessor);
                 }
                 listBuilder.layer(layerIndex++, layer.getLayer());
-                if (this.outputLayerNames.contains(layer.getLayerName()) && !(layer.getLayer() instanceof IOutputLayer))
-                    log.warn("Model cannot be trained: output layer " + layer.getLayerName()
-                            + " is not an IOutputLayer (no loss function specified)");
+                if (this.outputLayerNames.contains(layer.getLayerName()) && !(layer.getLayer() instanceof IOutputLayer)) {
+                    // TODO: since this is always true right now, it just clutters the output.
+//                    log.warn("Model cannot be trained: output layer " + layer.getLayerName()
+//                            + " is not an IOutputLayer (no loss function specified)");
+                }
             } else if (layer.getVertex() != null)
                 throw new InvalidKerasConfigurationException("Cannot add vertex to MultiLayerConfiguration (class name "
                         + layer.getClassName() + ", layer name " + layer.getLayerName() + ")");
@@ -205,7 +214,7 @@ public class KerasSequentialModel extends KerasModel {
     /**
      * Build a MultiLayerNetwork from this Keras Sequential model configuration.
      *
-     * @return          MultiLayerNetwork
+     * @return MultiLayerNetwork
      */
     public MultiLayerNetwork getMultiLayerNetwork()
             throws InvalidKerasConfigurationException, UnsupportedKerasConfigurationException {
@@ -215,7 +224,7 @@ public class KerasSequentialModel extends KerasModel {
     /**
      * Build a MultiLayerNetwork from this Keras Sequential model configuration and import weights.
      *
-     * @return          MultiLayerNetwork
+     * @return MultiLayerNetwork
      */
     public MultiLayerNetwork getMultiLayerNetwork(boolean importWeights)
             throws InvalidKerasConfigurationException, UnsupportedKerasConfigurationException {

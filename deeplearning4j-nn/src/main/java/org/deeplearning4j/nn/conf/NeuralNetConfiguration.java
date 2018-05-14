@@ -18,12 +18,10 @@
 
 package org.deeplearning4j.nn.conf;
 
-import com.google.common.collect.Sets;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.ClassUtils;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.api.layers.LayerConstraint;
 import org.deeplearning4j.nn.conf.distribution.Distribution;
@@ -31,15 +29,22 @@ import org.deeplearning4j.nn.conf.dropout.Dropout;
 import org.deeplearning4j.nn.conf.dropout.IDropout;
 import org.deeplearning4j.nn.conf.graph.GraphVertex;
 import org.deeplearning4j.nn.conf.inputs.InputType;
+import org.deeplearning4j.nn.conf.layers.misc.FrozenLayerWithBackprop;
+import org.deeplearning4j.nn.conf.layers.variational.ReconstructionDistribution;
+import org.deeplearning4j.nn.conf.serde.JsonMappers;
 import org.deeplearning4j.nn.conf.layers.*;
 import org.deeplearning4j.nn.conf.layers.misc.FrozenLayer;
-import org.deeplearning4j.nn.conf.layers.variational.ReconstructionDistribution;
-import org.deeplearning4j.nn.conf.serde.ComputationGraphConfigurationDeserializer;
-import org.deeplearning4j.nn.conf.serde.MultiLayerConfigurationDeserializer;
+import org.deeplearning4j.nn.conf.layers.recurrent.Bidirectional;
+import org.deeplearning4j.nn.conf.layers.samediff.BaseSameDiffLayer;
+import org.deeplearning4j.nn.conf.layers.wrapper.BaseWrapperLayer;
+import org.deeplearning4j.nn.conf.serde.legacyformat.LegacyGraphVertexDeserializer;
+import org.deeplearning4j.nn.conf.serde.legacyformat.LegacyLayerDeserializer;
+import org.deeplearning4j.nn.conf.serde.legacyformat.LegacyPreprocessorDeserializer;
+import org.deeplearning4j.nn.conf.serde.legacyformat.LegacyReconstructionDistributionDeserializer;
 import org.deeplearning4j.nn.conf.stepfunctions.StepFunction;
 import org.deeplearning4j.nn.conf.weightnoise.IWeightNoise;
 import org.deeplearning4j.nn.weights.WeightInit;
-import org.deeplearning4j.util.reflections.DL4JSubTypesScanner;
+import org.nd4j.base.Preconditions;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.activations.IActivation;
 import org.nd4j.linalg.activations.impl.ActivationSigmoid;
@@ -47,22 +52,13 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.IUpdater;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.ILossFunction;
-import org.nd4j.shade.jackson.databind.*;
-import org.nd4j.shade.jackson.databind.deser.BeanDeserializerModifier;
-import org.nd4j.shade.jackson.databind.introspect.AnnotatedClass;
-import org.nd4j.shade.jackson.databind.jsontype.NamedType;
-import org.nd4j.shade.jackson.databind.module.SimpleModule;
-import org.nd4j.shade.jackson.dataformat.yaml.YAMLFactory;
-import org.reflections.ReflectionUtils;
-import org.reflections.Reflections;
-import org.reflections.util.ClasspathHelper;
-import org.reflections.util.ConfigurationBuilder;
-import org.reflections.util.FilterBuilder;
+import org.nd4j.linalg.primitives.Pair;
+import org.nd4j.serde.json.LegacyIActivationDeserializer;
+import org.nd4j.serde.json.LegacyILossFunctionDeserializer;
+import org.nd4j.shade.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.Serializable;
-import java.lang.reflect.Modifier;
-import java.net.URL;
 import java.util.*;
 
 
@@ -77,20 +73,9 @@ import java.util.*;
 @Slf4j
 public class NeuralNetConfiguration implements Serializable, Cloneable {
 
-
-    /**
-     * System property for custom layers, preprocessors, graph vertices etc. Enabled by default.
-     * Run JVM with "-Dorg.deeplearning4j.config.custom.enabled=false" to disable classpath scanning for
-     * Overriding the default (i.e., disabling) this is only useful if (a) no custom layers/preprocessors etc will be
-     * used, and (b) minimizing startup/initialization time for new JVMs is very important.
-     * Results are cached, so there is no cost to custom layers after the first network has been constructed.
-     */
-    public static final String CUSTOM_FUNCTIONALITY = "org.deeplearning4j.config.custom.enabled";
-
     protected Layer layer;
     //batch size: primarily used for conv nets. Will be reinforced if set.
     protected boolean miniBatch = true;
-    protected int numIterations;
     //number of line search iterations
     protected int maxNumLineSearchIterations;
     protected long seed;
@@ -109,7 +94,7 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
     protected CacheMode cacheMode;
 
     //Counter for the number of parameter updates so far for this layer.
-    //Note that this is only used for pretrain layers (RBM, VAE) - MultiLayerConfiguration and ComputationGraphConfiguration
+    //Note that this is only used for pretrain layers (AE, VAE) - MultiLayerConfiguration and ComputationGraphConfiguration
     //contain counters for standard backprop training.
     // This is important for learning rate schedules, for example, and is stored here to ensure it is persisted
     // for Spark and model serialization
@@ -117,10 +102,6 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
     //Counter for the number of epochs completed so far. Used for per-epoch schedules
     protected int epochCount = 0;
-
-    private static ObjectMapper mapper = initMapper();
-    private static final ObjectMapper mapperYaml = initMapperYaml();
-    private static Set<Class<?>> subtypesClassCache = null;
 
 
     /**
@@ -261,6 +242,26 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
+         * For the (perhaps partially constructed) network configuration, return a list of activation sizes for each
+         * layer in the network.<br>
+         * Note: To use this method, the network input type must have been set using {@link #setInputType(InputType)} first
+         * @return A list of activation types for the network, indexed by layer number
+         */
+        public List<InputType> getLayerActivationTypes(){
+            Preconditions.checkState(inputType != null, "Can only calculate activation types if input type has" +
+                    "been set. Use setInputType(InputType)");
+
+            MultiLayerConfiguration conf;
+            try{
+                conf = build();
+            } catch (Exception e){
+                throw new RuntimeException("Error calculating layer activation types: error instantiating MultiLayerConfiguration", e);
+            }
+
+            return conf.getLayerActivationTypes(inputType);
+        }
+
+        /**
          * Build the multi layer network
          * based on this neural network and
          * overr ridden parameters
@@ -288,11 +289,16 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
                 list.add(layerwise.get(i).build());
             }
+
+            WorkspaceMode wsmTrain = (globalConfig.setTWM ? globalConfig.trainingWorkspaceMode : trainingWorkspaceMode);
+            WorkspaceMode wsmTest = (globalConfig.setIWM ? globalConfig.inferenceWorkspaceMode : inferenceWorkspaceMode);
+
+
             return new MultiLayerConfiguration.Builder().backprop(backprop).inputPreProcessors(inputPreProcessors)
                             .pretrain(pretrain).backpropType(backpropType).tBPTTForwardLength(tbpttFwdLength)
                             .tBPTTBackwardLength(tbpttBackLength).setInputType(this.inputType)
-                            .trainingWorkspaceMode(globalConfig.trainingWorkspaceMode).cacheMode(globalConfig.cacheMode)
-                            .inferenceWorkspaceMode(globalConfig.inferenceWorkspaceMode).confs(list).build();
+                            .trainingWorkspaceMode(wsmTrain).cacheMode(globalConfig.cacheMode)
+                            .inferenceWorkspaceMode(wsmTest).confs(list).build();
         }
 
         /** Helper class for setting input types */
@@ -399,13 +405,7 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
      * @return
      */
     public static ObjectMapper mapperYaml() {
-        return mapperYaml;
-    }
-
-    private static ObjectMapper initMapperYaml() {
-        ObjectMapper ret = new ObjectMapper(new YAMLFactory());
-        configureMapper(ret);
-        return ret;
+        return JsonMappers.getMapperYaml();
     }
 
     /**
@@ -414,158 +414,95 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
      * @return
      */
     public static ObjectMapper mapper() {
-        return mapper;
+        return JsonMappers.getMapper();
     }
 
     /**
-     * Reinitialize and return the Jackson/json ObjectMapper with additional named types.
-     * This can be used to add additional subtypes at runtime (i.e., for JSON mapping with
-     * types defined outside of the main DL4J codebase)
+     * Set of classes that can be registered for legacy deserialization.
      */
-    public static ObjectMapper reinitMapperWithSubtypes(Collection<NamedType> additionalTypes) {
-        mapper.registerSubtypes(additionalTypes.toArray(new NamedType[additionalTypes.size()]));
-        //Recreate the mapper (via copy), as mapper won't use registered subtypes after first use
-        mapper = mapper.copy();
-        return mapper;
+    private static List<Class<?>> REGISTERABLE_CUSTOM_CLASSES = (List<Class<?>>) Arrays.<Class<?>>asList(
+            Layer.class,
+            GraphVertex.class,
+            InputPreProcessor.class,
+            IActivation.class,
+            ILossFunction.class,
+            ReconstructionDistribution.class
+    );
+
+    /**
+     * Register a set of classes (Layer, GraphVertex, InputPreProcessor, IActivation, ILossFunction, ReconstructionDistribution
+     * ONLY) for JSON deserialization.<br>
+     * <br>
+     * This is required ONLY when BOTH of the following conditions are met:<br>
+     * 1. You want to load a serialized net, saved in 1.0.0-alpha or before, AND<br>
+     * 2. The serialized net has a custom Layer, GraphVertex, etc (i.e., one not defined in DL4J)<br>
+     * <br>
+     * By passing the classes of these layers here, DL4J should be able to deserialize them, in spite of the JSON
+     * format change between versions.
+     *
+     * @param classes Classes to register
+     */
+    public static void registerLegacyCustomClassesForJSON(Class<?>... classes) {
+        registerLegacyCustomClassesForJSONList(Arrays.<Class<?>>asList(classes));
     }
 
-    private static ObjectMapper initMapper() {
-        ObjectMapper ret = new ObjectMapper();
-        configureMapper(ret);
-        return ret;
+    /**
+     * @see #registerLegacyCustomClassesForJSON(Class[])
+     */
+    public static void registerLegacyCustomClassesForJSONList(List<Class<?>> classes){
+        //Default names (i.e., old format for custom JSON format)
+        List<Pair<String,Class>> list = new ArrayList<>();
+        for(Class<?> c : classes){
+            list.add(new Pair<String,Class>(c.getSimpleName(), c));
+        }
+        registerLegacyCustomClassesForJSON(list);
     }
 
-    private static void configureMapper(ObjectMapper ret) {
-        ret.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        ret.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
-        ret.configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true);
-        ret.enable(SerializationFeature.INDENT_OUTPUT);
+    /**
+     * Register a set of classes (Layer, GraphVertex, InputPreProcessor, IActivation, ILossFunction, ReconstructionDistribution
+     * ONLY) for JSON deserialization, with custom names.<br>
+     * Using this method directly should never be required (instead: use {@link #registerLegacyCustomClassesForJSON(Class[])}
+     * but is added in case it is required in non-standard circumstances.
+     */
+    public static void registerLegacyCustomClassesForJSON(List<Pair<String,Class>> classes){
+        for(Pair<String,Class> p : classes){
+            String s = p.getFirst();
+            Class c = p.getRight();
+            //Check if it's a valid class to register...
+            boolean found = false;
+            for( Class<?> c2 : REGISTERABLE_CUSTOM_CLASSES){
+                if(c2.isAssignableFrom(c)){
+                    if(c2 == Layer.class){
+                        LegacyLayerDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends Layer>)c);
+                    } else if(c2 == GraphVertex.class){
+                        LegacyGraphVertexDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends GraphVertex>)c);
+                    } else if(c2 == InputPreProcessor.class){
+                        LegacyPreprocessorDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends InputPreProcessor>)c);
+                    } else if(c2 == IActivation.class ){
+                        LegacyIActivationDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends IActivation>)c);
+                    } else if(c2 == ILossFunction.class ){
+                        LegacyILossFunctionDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends ILossFunction>)c);
+                    } else if(c2 == ReconstructionDistribution.class){
+                        LegacyReconstructionDistributionDeserializer.registerLegacyClassSpecifiedName(s, (Class<? extends ReconstructionDistribution>)c);
+                    }
 
-        SimpleModule customDeserializerModule = new SimpleModule();
-        customDeserializerModule.setDeserializerModifier(new BeanDeserializerModifier() {
-            @Override
-            public JsonDeserializer<?> modifyDeserializer(DeserializationConfig config, BeanDescription beanDesc,
-                            JsonDeserializer<?> deserializer) {
-                //Use our custom deserializers to handle backward compatibility for updaters -> IUpdater
-                if (beanDesc.getBeanClass() == MultiLayerConfiguration.class) {
-                    return new MultiLayerConfigurationDeserializer(deserializer);
-                } else if (beanDesc.getBeanClass() == ComputationGraphConfiguration.class) {
-                    return new ComputationGraphConfigurationDeserializer(deserializer);
+                    found = true;
                 }
-                return deserializer;
             }
-        });
 
-        ret.registerModule(customDeserializerModule);
-
-        registerSubtypes(ret);
-    }
-
-    private static synchronized void registerSubtypes(ObjectMapper mapper) {
-        //Register concrete subtypes for JSON serialization
-
-        List<Class<?>> classes = Arrays.<Class<?>>asList(InputPreProcessor.class, ILossFunction.class,
-                        IActivation.class, Layer.class, GraphVertex.class, ReconstructionDistribution.class);
-        List<String> classNames = new ArrayList<>(6);
-        for (Class<?> c : classes)
-            classNames.add(c.getName());
-
-        // First: scan the classpath and find all instances of the 'baseClasses' classes
-        if (subtypesClassCache == null) {
-
-            //Check system property:
-            String prop = System.getProperty(CUSTOM_FUNCTIONALITY);
-            if (prop != null && !Boolean.parseBoolean(prop)) {
-
-                subtypesClassCache = Collections.emptySet();
-            } else {
-
-                List<Class<?>> interfaces = Arrays.<Class<?>>asList(InputPreProcessor.class, ILossFunction.class,
-                                IActivation.class, ReconstructionDistribution.class);
-                List<Class<?>> classesList = Arrays.<Class<?>>asList(Layer.class, GraphVertex.class);
-
-                Collection<URL> urls = ClasspathHelper.forClassLoader();
-                List<URL> scanUrls = new ArrayList<>();
-                for (URL u : urls) {
-                    String path = u.getPath();
-                    if (!path.matches(".*/jre/lib/.*jar")) { //Skip JRE/JDK JARs
-                        scanUrls.add(u);
-                    }
-                }
-
-                Reflections reflections = new Reflections(new ConfigurationBuilder().filterInputsBy(new FilterBuilder()
-                                .exclude("^(?!.*\\.class$).*$") //Consider only .class files (to avoid debug messages etc. on .dlls, etc
-                                //Exclude the following: the assumption here is that no custom functionality will ever be present
-                                // under these package name prefixes. These are all common dependencies for DL4J
-                                .exclude("^org.nd4j.*").exclude("^org.datavec.*").exclude("^org.bytedeco.*") //JavaCPP
-                                .exclude("^com.fasterxml.*")//Jackson
-                                .exclude("^org.apache.*") //Apache commons, Spark, log4j etc
-                                .exclude("^org.projectlombok.*").exclude("^com.twelvemonkeys.*").exclude("^org.joda.*")
-                                .exclude("^org.slf4j.*").exclude("^com.google.*").exclude("^org.reflections.*")
-                                .exclude("^ch.qos.*") //Logback
-                ).addUrls(scanUrls).setScanners(new DL4JSubTypesScanner(interfaces, classesList)));
-                org.reflections.Store store = reflections.getStore();
-
-                Iterable<String> subtypesByName = store.getAll(DL4JSubTypesScanner.class.getSimpleName(), classNames);
-
-                Set<? extends Class<?>> subtypeClasses = Sets.newHashSet(ReflectionUtils.forNames(subtypesByName));
-                subtypesClassCache = new HashSet<>();
-                for (Class<?> c : subtypeClasses) {
-                    if (Modifier.isAbstract(c.getModifiers()) || Modifier.isInterface(c.getModifiers())) {
-                        //log.info("Skipping abstract/interface: {}",c);
-                        continue;
-                    }
-                    subtypesClassCache.add(c);
-                }
+            if(!found){
+                throw new IllegalArgumentException("Cannot register class for legacy JSON deserialization: class " +
+                        c.getName() + " is not a subtype of classes " + REGISTERABLE_CUSTOM_CLASSES);
             }
         }
-
-        //Second: get all currently registered subtypes for this mapper
-        Set<Class<?>> registeredSubtypes = new HashSet<>();
-        for (Class<?> c : classes) {
-            AnnotatedClass ac = AnnotatedClass.construct(c, mapper.getSerializationConfig().getAnnotationIntrospector(),
-                            null);
-            Collection<NamedType> types =
-                            mapper.getSubtypeResolver().collectAndResolveSubtypes(ac, mapper.getSerializationConfig(),
-                                            mapper.getSerializationConfig().getAnnotationIntrospector());
-            for (NamedType nt : types) {
-                registeredSubtypes.add(nt.getType());
-            }
-        }
-
-        //Third: register all _concrete_ subtypes that are not already registered
-        List<NamedType> toRegister = new ArrayList<>();
-        for (Class<?> c : subtypesClassCache) {
-            //Check if it's concrete or abstract...
-            if (Modifier.isAbstract(c.getModifiers()) || Modifier.isInterface(c.getModifiers())) {
-                //log.info("Skipping abstract/interface: {}",c);
-                continue;
-            }
-
-            if (!registeredSubtypes.contains(c)) {
-                String name;
-                if (ClassUtils.isInnerClass(c)) {
-                    Class<?> c2 = c.getDeclaringClass();
-                    name = c2.getSimpleName() + "$" + c.getSimpleName();
-                } else {
-                    name = c.getSimpleName();
-                }
-                toRegister.add(new NamedType(c, name));
-                if (log.isDebugEnabled()) {
-                    for (Class<?> baseClass : classes) {
-                        if (baseClass.isAssignableFrom(c)) {
-                            log.debug("Registering class for JSON serialization: {} as subtype of {}", c.getName(),
-                                            baseClass.getName());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        mapper.registerSubtypes(toRegister.toArray(new NamedType[toRegister.size()]));
     }
 
+    /**
+     * NeuralNetConfiguration builder, used as a starting point for creating a MultiLayerConfiguration or
+     * ComputationGraphConfiguration.<br>
+     * Note that values set here on the layer will be applied to all relevant layers - unless the value is overridden
+     * on a layer's configuration
+     */
     @Data
     public static class Builder implements Cloneable {
         protected IActivation activationFn = new ActivationSigmoid();
@@ -582,7 +519,6 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         protected IUpdater biasUpdater = null;
         protected Layer layer;
         protected boolean miniBatch = true;
-        protected int numIterations = 1;
         protected int maxNumLineSearchIterations = 5;
         protected long seed = System.currentTimeMillis();
         protected OptimizationAlgorithm optimizationAlgo = OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT;
@@ -595,11 +531,14 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         protected List<LayerConstraint> weightConstraints;
         protected List<LayerConstraint> biasConstraints;
 
-        protected WorkspaceMode trainingWorkspaceMode = WorkspaceMode.NONE;
-        protected WorkspaceMode inferenceWorkspaceMode = WorkspaceMode.SEPARATE;
+        protected WorkspaceMode trainingWorkspaceMode = WorkspaceMode.ENABLED;
+        protected WorkspaceMode inferenceWorkspaceMode = WorkspaceMode.ENABLED;
+        protected boolean setTWM = false;
+        protected boolean setIWM = false;
         protected CacheMode cacheMode = CacheMode.NONE;
 
         protected ConvolutionMode convolutionMode = ConvolutionMode.Truncate;
+        protected ConvolutionLayer.AlgoMode cudnnAlgoMode = ConvolutionLayer.AlgoMode.PREFER_FASTEST;
 
         public Builder() {
             //
@@ -610,7 +549,6 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
                 minimize = newConf.minimize;
                 maxNumLineSearchIterations = newConf.maxNumLineSearchIterations;
                 layer = newConf.layer;
-                numIterations = newConf.numIterations;
                 optimizationAlgo = newConf.optimizationAlgo;
                 seed = newConf.seed;
                 stepFunction = newConf.stepFunction;
@@ -629,30 +567,30 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * This method defines Workspace mode being used during training:
-         * NONE: workspace won't be used
-         * SINGLE: one workspace will be used during whole iteration loop
-         * SEPARATE: separate workspaces will be used for feedforward and backprop iteration loops
+         * This method defines Workspace mode being used during training:<br>
+         * NONE: workspace won't be used<br>
+         * ENABLED: workspaces will be used for training (reduced memory and better performance)
          *
-         * @param workspaceMode
-         * @return
+         * @param workspaceMode Workspace mode for training
+         * @return Builder
          */
         public Builder trainingWorkspaceMode(@NonNull WorkspaceMode workspaceMode) {
             this.trainingWorkspaceMode = workspaceMode;
+            this.setTWM = true;
             return this;
         }
 
         /**
-         * This method defines Workspace mode being used during inference:
-         * NONE: workspace won't be used
-         * SINGLE: one workspace will be used during whole iteration loop
-         * SEPARATE: separate workspaces will be used for feedforward and backprop iteration loops
+         * This method defines Workspace mode being used during inference:<br>
+         * NONE: workspace won't be used<br>
+         * ENABLED: workspaces will be used for inference (reduced memory and better performance)
          *
-         * @param workspaceMode
-         * @return
+         * @param workspaceMode Workspace mode for inference
+         * @return Builder
          */
         public Builder inferenceWorkspaceMode(@NonNull WorkspaceMode workspaceMode) {
             this.inferenceWorkspaceMode = workspaceMode;
+            this.setIWM = true;
             return this;
         }
 
@@ -662,8 +600,8 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
          * HOST: Host memory will be used
          * DEVICE: GPU memory will be used (on CPU backends effect will be the same as for HOST)
          *
-         * @param cacheMode
-         * @return
+         * @param cacheMode Cache mode to use
+         * @return Builder
          */
         public Builder cacheMode(@NonNull CacheMode cacheMode) {
             this.cacheMode = cacheMode;
@@ -762,15 +700,6 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * Number of optimization iterations. Should be set to 1 for >99% of use cases (possible exception:
-         * very tiny full batch dataset training)
-         */
-        public Builder iterations(int numIterations) {
-            this.numIterations = numIterations;
-            return this;
-        }
-
-        /**
          * Random number generator seed. Used for reproducability between runs
          */
         public Builder seed(long seed) {
@@ -806,7 +735,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * Activation function / neuron non-linearity
+         * Activation function / neuron non-linearity<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @see #activation(Activation)
          */
@@ -816,14 +748,20 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * Activation function / neuron non-linearity
+         * Activation function / neuron non-linearity<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder activation(Activation activation) {
             return activation(activation.getActivationFunction());
         }
 
         /**
-         * Weight initialization scheme.
+         * Weight initialization scheme.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @see org.deeplearning4j.nn.weights.WeightInit
          */
@@ -833,7 +771,24 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * Constant for bias initialization. Default: 0.0
+         * Set weight initialization scheme to random sampling via the specified distribution.
+         * Equivalent to: {@code .weightInit(WeightInit.DISTRIBUTION).dist(distribution)}<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
+         *
+         * @param distribution Distribution to use for weight initialization
+         */
+        public Builder weightInit(Distribution distribution){
+            weightInit(WeightInit.DISTRIBUTION);
+            return dist(distribution);
+        }
+
+        /**
+         * Constant for bias initialization. Default: 0.0<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param biasInit Constant for bias initialization
          */
@@ -844,7 +799,12 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Distribution to sample initial weights from. Used in conjunction with
-         * .weightInit(WeightInit.DISTRIBUTION).
+         * .weightInit(WeightInit.DISTRIBUTION).<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
+         *
+         * @see #weightInit(Distribution)
          */
         public Builder dist(Distribution dist) {
             this.dist = dist;
@@ -852,7 +812,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * L1 regularization coefficient for the weights.
+         * L1 regularization coefficient for the weights.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder l1(double l1) {
             this.l1 = l1;
@@ -860,7 +823,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * L2 regularization coefficient for the weights.
+         * L2 regularization coefficient for the weights.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder l2(double l2) {
             this.l2 = l2;
@@ -868,7 +834,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * L1 regularization coefficient for the bias.
+         * L1 regularization coefficient for the bias.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder l1Bias(double l1Bias) {
             this.l1Bias = l1Bias;
@@ -876,7 +845,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
-         * L2 regularization coefficient for the bias.
+         * L2 regularization coefficient for the bias.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder l2Bias(double l2Bias) {
             this.l2Bias = l2Bias;
@@ -900,16 +872,26 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
          * Note 4: Implementation detail (most users can ignore): DL4J uses inverted dropout, as described here:
          * <a href="http://cs231n.github.io/neural-networks-2/">http://cs231n.github.io/neural-networks-2/</a>
          * </p>
+         *<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param inputRetainProbability Dropout probability (probability of retaining each input activation value for a layer)
          * @see #dropOut(IDropout)
          */
         public Builder dropOut(double inputRetainProbability) {
+            if(inputRetainProbability == 0.0){
+                return dropOut(null);
+            }
             return dropOut(new Dropout(inputRetainProbability));
         }
 
         /**
-         * Set the dropout for all layers in this network
+         * Set the dropout for all layers in this network<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param dropout Dropout, such as {@link Dropout}, {@link org.deeplearning4j.nn.conf.dropout.GaussianDropout},
          *                {@link org.deeplearning4j.nn.conf.dropout.GaussianNoise} etc
@@ -922,7 +904,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Set the weight noise (such as {@link org.deeplearning4j.nn.conf.weightnoise.DropConnect} and
-         * {@link org.deeplearning4j.nn.conf.weightnoise.WeightNoise}) for the layers in this network.
+         * {@link org.deeplearning4j.nn.conf.weightnoise.WeightNoise}) for the layers in this network.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param weightNoise Weight noise instance to use
          */
@@ -942,7 +927,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Gradient updater configuration. For example, {@link org.nd4j.linalg.learning.config.Adam}
-         * or {@link org.nd4j.linalg.learning.config.Nesterovs}
+         * or {@link org.nd4j.linalg.learning.config.Nesterovs}<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param updater Updater to use
          */
@@ -953,7 +941,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Gradient updater configuration, for the biases only. If not set, biases will use the updater as
-         * set by {@link #updater(IUpdater)}
+         * set by {@link #updater(IUpdater)}<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param updater Updater to use for bias parameters
          */
@@ -964,7 +955,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Gradient normalization strategy. Used to specify gradient renormalization, gradient clipping etc.
-         * See {@link GradientNormalization} for details
+         * See {@link GradientNormalization} for details<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param gradientNormalization Type of normalization to use. Defaults to None.
          * @see GradientNormalization
@@ -978,7 +972,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
          * Threshold for gradient normalization, only used for GradientNormalization.ClipL2PerLayer,
          * GradientNormalization.ClipL2PerParamType, and GradientNormalization.ClipElementWiseAbsoluteValue<br>
          * Not used otherwise.<br>
-         * L2 threshold for first two types of clipping, or absolute value threshold for last type of clipping.
+         * L2 threshold for first two types of clipping, or absolute value threshold for last type of clipping.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          */
         public Builder gradientNormalizationThreshold(double threshold) {
             this.gradientNormalizationThreshold = threshold;
@@ -987,7 +984,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
 
         /**
          * Sets the convolution mode for convolutional layers, which impacts padding and output sizes.
-         * See {@link ConvolutionMode} for details. Defaults to ConvolutionMode.TRUNCATE
+         * See {@link ConvolutionMode} for details. Defaults to ConvolutionMode.TRUNCATE<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          * @param convolutionMode Convolution mode to use
          */
         public Builder convolutionMode(ConvolutionMode convolutionMode) {
@@ -996,9 +996,26 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         }
 
         /**
+         * Sets the cuDNN algo mode for convolutional layers, which impacts performance and memory usage of cuDNN.
+         * See {@link ConvolutionLayer.AlgoMode} for details.  Defaults to "PREFER_FASTEST", but "NO_WORKSPACE" uses less memory.
+         * <br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
+         * @param cudnnAlgoMode cuDNN algo mode to use
+         */
+        public Builder cudnnAlgoMode(ConvolutionLayer.AlgoMode cudnnAlgoMode) {
+            this.cudnnAlgoMode = cudnnAlgoMode;
+            return this;
+        }
+
+        /**
          * Set constraints to be applied to all layers. Default: no constraints.<br>
          * Constraints can be used to enforce certain conditions (non-negativity of parameters, max-norm regularization,
-         * etc). These constraints are applied at each iteration, after the parameters have been updated.
+         * etc). These constraints are applied at each iteration, after the parameters have been updated.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param constraints Constraints to apply to all parameters of all layers
          */
@@ -1010,7 +1027,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         /**
          * Set constraints to be applied to all layers. Default: no constraints.<br>
          * Constraints can be used to enforce certain conditions (non-negativity of parameters, max-norm regularization,
-         * etc). These constraints are applied at each iteration, after the parameters have been updated.
+         * etc). These constraints are applied at each iteration, after the parameters have been updated.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param constraints Constraints to apply to all bias parameters of all layers
          */
@@ -1022,7 +1042,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
         /**
          * Set constraints to be applied to all layers. Default: no constraints.<br>
          * Constraints can be used to enforce certain conditions (non-negativity of parameters, max-norm regularization,
-         * etc). These constraints are applied at each iteration, after the parameters have been updated.
+         * etc). These constraints are applied at each iteration, after the parameters have been updated.<br>
+         * Note: values set by this method will be applied to all applicable layers in the network, unless a different
+         * value is explicitly set on a given layer. In other words: values set via this method are used as the default
+         * value, and can be overridden on a per-layer basis.
          *
          * @param constraints Constraints to apply to all weight parameters of all layers
          */
@@ -1042,7 +1065,6 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
             conf.minimize = minimize;
             conf.maxNumLineSearchIterations = maxNumLineSearchIterations;
             conf.layer = layer;
-            conf.numIterations = numIterations;
             conf.optimizationAlgo = optimizationAlgo;
             conf.seed = seed;
             conf.stepFunction = stepFunction;
@@ -1055,6 +1077,10 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
                 configureLayer(((FrozenLayer) layer).getLayer());
             }
 
+            if (layer instanceof FrozenLayerWithBackprop) {
+                configureLayer(((FrozenLayerWithBackprop) layer).getUnderlying());
+            }
+
             return conf;
         }
 
@@ -1065,6 +1091,11 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
             else
                 layerName = layer.getLayerName();
 
+            if(layer instanceof BaseSameDiffLayer){
+                BaseSameDiffLayer sdl = (BaseSameDiffLayer)layer;
+                sdl.applyGlobalConfig(this);
+            }
+
             if (layer != null) {
                 copyConfigToLayer(layerName, layer);
             }
@@ -1073,10 +1104,28 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
                 copyConfigToLayer(layerName, ((FrozenLayer) layer).getLayer());
             }
 
+            if (layer instanceof FrozenLayerWithBackprop) {
+                copyConfigToLayer(layerName, ((FrozenLayerWithBackprop) layer).getUnderlying());
+            }
+
+            if (layer instanceof Bidirectional) {
+                Bidirectional b = (Bidirectional)layer;
+                copyConfigToLayer(b.getFwd().getLayerName(), b.getFwd());
+                copyConfigToLayer(b.getBwd().getLayerName(), b.getBwd());
+            }
+
+            if(layer instanceof BaseWrapperLayer){
+                BaseWrapperLayer bwr = (BaseWrapperLayer)layer;
+                configureLayer(bwr.getUnderlying());
+            }
+
             if (layer instanceof ConvolutionLayer) {
                 ConvolutionLayer cl = (ConvolutionLayer) layer;
                 if (cl.getConvolutionMode() == null) {
                     cl.setConvolutionMode(convolutionMode);
+                }
+                if (cl.getCudnnAlgoMode() == null) {
+                    cl.setCudnnAlgoMode(cudnnAlgoMode);
                 }
             }
             if (layer instanceof SubsamplingLayer) {
@@ -1131,6 +1180,12 @@ public class NeuralNetConfiguration implements Serializable, Cloneable {
                     bLayer.setGradientNormalization(gradientNormalization);
                 if (Double.isNaN(bLayer.getGradientNormalizationThreshold()))
                     bLayer.setGradientNormalizationThreshold(gradientNormalizationThreshold);
+            }
+
+            if (layer instanceof ActivationLayer){
+                ActivationLayer al = (ActivationLayer)layer;
+                if(al.getActivationFn() == null)
+                    al.setActivationFn(activationFn);
             }
         }
     }

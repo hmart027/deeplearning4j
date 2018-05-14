@@ -12,7 +12,9 @@ import org.deeplearning4j.nn.conf.layers.SubsamplingLayer;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
 import org.deeplearning4j.util.ModelSerializer;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
 import org.nd4j.linalg.learning.config.Nesterovs;
@@ -26,6 +28,9 @@ import java.io.File;
 @Slf4j
 public class ParallelWrapperMainTest {
 
+    @Rule
+    public TemporaryFolder testDir = new TemporaryFolder();
+
     @Test
     public void runParallelWrapperMain() throws Exception {
 
@@ -34,8 +39,6 @@ public class ParallelWrapperMainTest {
 
         // for GPU you usually want to have higher batchSize
         int batchSize = 128;
-        int nEpochs = 10;
-        int iterations = 1;
         int seed = 123;
         int uiPort = 9500;
         System.setProperty("org.deeplearning4j.ui.port", String.valueOf(uiPort));
@@ -44,12 +47,12 @@ public class ParallelWrapperMainTest {
         DataSetIterator mnistTest = new MnistDataSetIterator(batchSize, false, 12345);
 
         log.info("Build model....");
-        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed).iterations(iterations)
+        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed)
                         .l2(0.0005)
                         .weightInit(WeightInit.XAVIER)
                         .updater(new Nesterovs(0.01, 0.9)).list()
                         .layer(0, new ConvolutionLayer.Builder(5, 5)
-                                        //nIn and nOut specify depth. nIn here is the nChannels and nOut is the number of filters to be applied
+                                        //nIn and nOut specify channels. nIn here is the nChannels and nOut is the number of filters to be applied
                                         .nIn(nChannels).stride(1, 1).nOut(20).activation(Activation.IDENTITY).build())
                         .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).kernelSize(2, 2)
                                         .stride(2, 2).build())
@@ -66,10 +69,10 @@ public class ParallelWrapperMainTest {
         MultiLayerConfiguration conf = builder.build();
         MultiLayerNetwork model = new MultiLayerNetwork(conf);
         model.init();
-        File tempModel = new File("tmpmodel.zip");
+        File tempModel = testDir.newFile("tmpmodel.zip");
         tempModel.deleteOnExit();
         ModelSerializer.writeModel(model, tempModel, false);
-        File tmp = new File("tmpmodel.bin");
+        File tmp = testDir.newFile("tmpmodel.bin");
         tmp.deleteOnExit();
         ParallelWrapperMain parallelWrapperMain = new ParallelWrapperMain();
         parallelWrapperMain.runMain(new String[] {"--modelPath", tempModel.getAbsolutePath(),

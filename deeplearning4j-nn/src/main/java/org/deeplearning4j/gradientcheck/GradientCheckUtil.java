@@ -31,12 +31,9 @@ import org.nd4j.linalg.learning.config.NoOp;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.ILossFunction;
 import org.nd4j.linalg.lossfunctions.impl.LossMCXENT;
-import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /** A utility for numerically checking gradients. <br>
  * Basic idea: compare calculated gradients with those calculated numerically,
@@ -111,6 +108,28 @@ public class GradientCheckUtil {
      */
     public static boolean checkGradients(MultiLayerNetwork mln, double epsilon, double maxRelError,
                     double minAbsoluteError, boolean print, boolean exitOnFirstError, INDArray input, INDArray labels) {
+        return checkGradients(mln, epsilon, maxRelError, minAbsoluteError, print, exitOnFirstError, input, labels, null, null);
+    }
+
+    public static boolean checkGradients(MultiLayerNetwork mln, double epsilon, double maxRelError,
+                                         double minAbsoluteError, boolean print, boolean exitOnFirstError,
+                                         INDArray input, INDArray labels, INDArray inputMask, INDArray labelMask) {
+        return checkGradients(mln, epsilon, maxRelError, minAbsoluteError, print, exitOnFirstError,
+                input, labels, inputMask, labelMask, false, -1);
+    }
+
+    public static boolean checkGradients(MultiLayerNetwork mln, double epsilon, double maxRelError,
+                                         double minAbsoluteError, boolean print, boolean exitOnFirstError,
+                                         INDArray input, INDArray labels, INDArray inputMask, INDArray labelMask,
+                                         boolean subset, int maxPerParam) {
+        return checkGradients(mln, epsilon, maxRelError, minAbsoluteError, print, exitOnFirstError, input,
+                labels, inputMask, labelMask, subset, maxPerParam, null);
+    }
+
+    public static boolean checkGradients(MultiLayerNetwork mln, double epsilon, double maxRelError,
+                                         double minAbsoluteError, boolean print, boolean exitOnFirstError,
+                                         INDArray input, INDArray labels, INDArray inputMask, INDArray labelMask,
+                                         boolean subset, int maxPerParam, Set<String> excludeParams) {
         //Basic sanity checks on input:
         if (epsilon <= 0.0 || epsilon > 0.1)
             throw new IllegalArgumentException("Invalid epsilon: expect epsilon in range (0,0.1], usually 1e-4 or so");
@@ -171,11 +190,12 @@ public class GradientCheckUtil {
 
         mln.setInput(input);
         mln.setLabels(labels);
+        mln.setLayerMaskArrays(inputMask, labelMask);
         mln.computeGradientAndScore();
         Pair<Gradient, Double> gradAndScore = mln.gradientAndScore();
 
         Updater updater = UpdaterCreator.getUpdater(mln);
-        updater.update(mln, gradAndScore.getFirst(), 0, 0, mln.batchSize());
+        updater.update(mln, gradAndScore.getFirst(), 0, 0, mln.batchSize(), LayerWorkspaceMgr.noWorkspaces());
 
         INDArray gradientToCheck = gradAndScore.getFirst().gradient().dup(); //need dup: gradients are a *view* of the full gradient array (which will change every time backprop is done)
         INDArray originalParams = mln.params().dup(); //need dup: params are a *view* of full parameters
@@ -186,23 +206,52 @@ public class GradientCheckUtil {
         List<String> paramNames = new ArrayList<>(paramTable.keySet());
         int[] paramEnds = new int[paramNames.size()];
         paramEnds[0] = paramTable.get(paramNames.get(0)).length();
+        Map<String,Integer> stepSizeForParam;
+        if(subset){
+            stepSizeForParam = new HashMap<>();
+            stepSizeForParam.put(paramNames.get(0), Math.max(1, paramTable.get(paramNames.get(0)).length() / maxPerParam));
+        } else {
+            stepSizeForParam = null;
+        }
         for (int i = 1; i < paramEnds.length; i++) {
-            paramEnds[i] = paramEnds[i - 1] + paramTable.get(paramNames.get(i)).length();
+            int n = paramTable.get(paramNames.get(i)).length();
+            paramEnds[i] = paramEnds[i - 1] + n;
+            if(subset){
+                int ss = n / maxPerParam;
+                if(ss == 0){
+                    ss = n;
+                }
+                stepSizeForParam.put(paramNames.get(i), ss);
+            }
+        }
+
+        if(print) {
+            int i=0;
+            for (Layer l : mln.getLayers()) {
+                Set<String> s = l.paramTable().keySet();
+                log.info("Layer " + i + ": " + l.getClass().getSimpleName() + " - params " + s);
+                i++;
+            }
         }
 
 
         int totalNFailures = 0;
         double maxError = 0.0;
-        DataSet ds = new DataSet(input, labels);
+        DataSet ds = new DataSet(input, labels, inputMask, labelMask);
         int currParamNameIdx = 0;
 
         INDArray params = mln.params(); //Assumption here: params is a view that we can modify in-place
-        for (int i = 0; i < nParams; i++) {
+        for (int i = 0; i < nParams; ) {
             //Get param name
             if (i >= paramEnds[currParamNameIdx]) {
                 currParamNameIdx++;
             }
             String paramName = paramNames.get(currParamNameIdx);
+            if(excludeParams != null && excludeParams.contains(paramName)){
+                log.info("Skipping parameters for parameter name: {}", paramName);
+                i = paramEnds[currParamNameIdx++];
+                continue;
+            }
 
             //(w+epsilon): Do forward pass and score
             double origValue = params.getDouble(i);
@@ -236,14 +285,16 @@ public class GradientCheckUtil {
             if (relError > maxRelError || Double.isNaN(relError)) {
                 double absError = Math.abs(backpropGradient - numericalGradient);
                 if (absError < minAbsoluteError) {
-                    log.info("Param " + i + " (" + paramName + ") passed: grad= " + backpropGradient
-                                    + ", numericalGrad= " + numericalGradient + ", relError= " + relError
-                                    + "; absolute error = " + absError + " < minAbsoluteError = " + minAbsoluteError);
+                    if(print) {
+                        log.info("Param " + i + " (" + paramName + ") passed: grad= " + backpropGradient
+                                + ", numericalGrad= " + numericalGradient + ", relError= " + relError
+                                + "; absolute error = " + absError + " < minAbsoluteError = " + minAbsoluteError);
+                    }
                 } else {
                     if (print)
                         log.info("Param " + i + " (" + paramName + ") FAILED: grad= " + backpropGradient
                                         + ", numericalGrad= " + numericalGradient + ", relError= " + relError
-                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus);
+                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus + ", paramValue = " + origValue);
                     if (exitOnFirstError)
                         return false;
                     totalNFailures++;
@@ -252,6 +303,18 @@ public class GradientCheckUtil {
                 log.info("Param " + i + " (" + paramName + ") passed: grad= " + backpropGradient + ", numericalGrad= "
                                 + numericalGradient + ", relError= " + relError);
             }
+
+            int step;
+            if(subset){
+                step = stepSizeForParam.get(paramName);
+                if(i + step > paramEnds[currParamNameIdx]+1){
+                    step = paramEnds[currParamNameIdx]+1 - i;
+                }
+            } else {
+                step = 1;
+            }
+
+            i += step;
         }
 
         if (print) {
@@ -281,6 +344,19 @@ public class GradientCheckUtil {
     public static boolean checkGradients(ComputationGraph graph, double epsilon, double maxRelError,
                     double minAbsoluteError, boolean print, boolean exitOnFirstError, INDArray[] inputs,
                     INDArray[] labels) {
+        return checkGradients(graph, epsilon, maxRelError, minAbsoluteError, print, exitOnFirstError, inputs, labels, null, null, null);
+    }
+
+    public static boolean checkGradients(ComputationGraph graph, double epsilon, double maxRelError,
+                                         double minAbsoluteError, boolean print, boolean exitOnFirstError, INDArray[] inputs,
+                                         INDArray[] labels, INDArray[] fMask, INDArray[] lMask) {
+        return checkGradients(graph, epsilon, maxRelError, minAbsoluteError, print, exitOnFirstError, inputs,
+                labels, fMask, lMask, null);
+    }
+
+    public static boolean checkGradients(ComputationGraph graph, double epsilon, double maxRelError,
+                                         double minAbsoluteError, boolean print, boolean exitOnFirstError, INDArray[] inputs,
+                                         INDArray[] labels, INDArray[] fMask, INDArray[] lMask, Set<String> excludeParams) {
         //Basic sanity checks on input:
         if (epsilon <= 0.0 || epsilon > 0.1)
             throw new IllegalArgumentException("Invalid epsilon: expect epsilon in range (0,0.1], usually 1e-4 or so");
@@ -353,11 +429,13 @@ public class GradientCheckUtil {
         for (int i = 0; i < labels.length; i++)
             graph.setLabel(i, labels[i]);
 
+        graph.setLayerMaskArrays(fMask, lMask);
+
         graph.computeGradientAndScore();
         Pair<Gradient, Double> gradAndScore = graph.gradientAndScore();
 
         ComputationGraphUpdater updater = new ComputationGraphUpdater(graph);
-        updater.update(gradAndScore.getFirst(), 0, 0, graph.batchSize());
+        updater.update(gradAndScore.getFirst(), 0, 0, graph.batchSize(), LayerWorkspaceMgr.noWorkspaces());
 
         INDArray gradientToCheck = gradAndScore.getFirst().gradient().dup(); //need dup: gradients are a *view* of the full gradient array (which will change every time backprop is done)
         INDArray originalParams = graph.params().dup(); //need dup: params are a *view* of full parameters
@@ -375,7 +453,7 @@ public class GradientCheckUtil {
         int currParamNameIdx = 0;
         int totalNFailures = 0;
         double maxError = 0.0;
-        MultiDataSet mds = new MultiDataSet(inputs, labels);
+        MultiDataSet mds = new MultiDataSet(inputs, labels, fMask, lMask);
         INDArray params = graph.params(); //Assumption here: params is a view that we can modify in-place
         for (int i = 0; i < nParams; i++) {
             //Get param name
@@ -383,6 +461,11 @@ public class GradientCheckUtil {
                 currParamNameIdx++;
             }
             String paramName = paramNames.get(currParamNameIdx);
+            if(excludeParams != null && excludeParams.contains(paramName)){
+                log.info("Skipping parameters for parameter name: {}", paramName);
+                i = paramEnds[currParamNameIdx++];
+                continue;
+            }
 
             //(w+epsilon): Do forward pass and score
             double origValue = params.getDouble(i);
@@ -424,7 +507,7 @@ public class GradientCheckUtil {
                     if (print)
                         log.info("Param " + i + " (" + paramName + ") FAILED: grad= " + backpropGradient
                                         + ", numericalGrad= " + numericalGradient + ", relError= " + relError
-                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus);
+                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus + ", paramValue = " + origValue);
                     if (exitOnFirstError)
                         return false;
                     totalNFailures++;
@@ -453,6 +536,9 @@ public class GradientCheckUtil {
      */
     public static boolean checkGradientsPretrainLayer(Layer layer, double epsilon, double maxRelError,
                     double minAbsoluteError, boolean print, boolean exitOnFirstError, INDArray input, int rngSeed) {
+
+        LayerWorkspaceMgr mgr = LayerWorkspaceMgr.noWorkspaces();
+
         //Basic sanity checks on input:
         if (epsilon <= 0.0 || epsilon > 0.1)
             throw new IllegalArgumentException("Invalid epsilon: expect epsilon in range (0,0.1], usually 1e-4 or so");
@@ -467,13 +553,13 @@ public class GradientCheckUtil {
         }
 
         //Check network configuration:
-        layer.setInput(input);
+        layer.setInput(input, LayerWorkspaceMgr.noWorkspaces());
         Nd4j.getRandom().setSeed(rngSeed);
-        layer.computeGradientAndScore();
+        layer.computeGradientAndScore(mgr);
         Pair<Gradient, Double> gradAndScore = layer.gradientAndScore();
 
         Updater updater = UpdaterCreator.getUpdater(layer);
-        updater.update(layer, gradAndScore.getFirst(), 0, 0, layer.batchSize());
+        updater.update(layer, gradAndScore.getFirst(), 0, 0, layer.batchSize(), LayerWorkspaceMgr.noWorkspaces());
 
         INDArray gradientToCheck = gradAndScore.getFirst().gradient().dup(); //need dup: gradients are a *view* of the full gradient array (which will change every time backprop is done)
         INDArray originalParams = layer.params().dup(); //need dup: params are a *view* of full parameters
@@ -507,13 +593,13 @@ public class GradientCheckUtil {
 
             //TODO add a 'score' method that doesn't calculate gradients...
             Nd4j.getRandom().setSeed(rngSeed);
-            layer.computeGradientAndScore();
+            layer.computeGradientAndScore(mgr);
             double scorePlus = layer.score();
 
             //(w-epsilon): Do forward pass and score
             params.putScalar(i, origValue - epsilon);
             Nd4j.getRandom().setSeed(rngSeed);
-            layer.computeGradientAndScore();
+            layer.computeGradientAndScore(mgr);
             double scoreMinus = layer.score();
 
             //Reset original param value
@@ -546,7 +632,7 @@ public class GradientCheckUtil {
                     if (print)
                         log.info("Param " + i + " (" + paramName + ") FAILED: grad= " + backpropGradient
                                         + ", numericalGrad= " + numericalGradient + ", relError= " + relError
-                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus);
+                                        + ", scorePlus=" + scorePlus + ", scoreMinus= " + scoreMinus + ", paramValue = " + origValue);
                     if (exitOnFirstError)
                         return false;
                     totalNFailures++;

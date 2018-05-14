@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.layers.convolution;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.datasets.iterator.impl.MnistDataSetIterator;
 import org.deeplearning4j.eval.Evaluation;
 import org.deeplearning4j.exception.DL4JException;
@@ -30,13 +31,14 @@ import org.nd4j.linalg.indexing.INDArrayIndex;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.nd4j.linalg.learning.config.Nesterovs;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import static org.junit.Assert.*;
 
 /**
  * @author Adam Gibson
  */
-public class ConvolutionLayerTest {
+public class ConvolutionLayerTest extends BaseDL4JTest {
 
     @Before
     public void before() {
@@ -47,7 +49,7 @@ public class ConvolutionLayerTest {
 
     @Test
     public void testTwdFirstLayer() throws Exception {
-        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(123).iterations(5)
+        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(123)
                         .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).l2(2e-4)
                         .updater(new Nesterovs(0.9)).dropOut(0.5)
                         .list().layer(0,
@@ -70,7 +72,10 @@ public class ConvolutionLayerTest {
         MultiLayerConfiguration conf = builder.build();
         MultiLayerNetwork network = new MultiLayerNetwork(conf);
         network.init();
-        network.fit(iter.next());
+        DataSet ds = iter.next();
+        for( int i=0; i<5; i++ ) {
+            network.fit(ds);
+        }
     }
 
     @Test
@@ -87,8 +92,7 @@ public class ConvolutionLayerTest {
         DataSet trainInput;
         MultiLayerConfiguration.Builder builder =
                         new NeuralNetConfiguration.Builder()
-                                        .seed(123).iterations(
-                                                        1)
+                                        .seed(123)
                                         .list()
                                         .layer(0, new ConvolutionLayer.Builder(kernelHeight, kernelWidth).stride(1, 1)
                                                         .nOut(2).activation(Activation.RELU)
@@ -127,8 +131,7 @@ public class ConvolutionLayerTest {
         DataSet trainInput;
         MultiLayerConfiguration.Builder builder =
                         new NeuralNetConfiguration.Builder()
-                                        .seed(123).iterations(
-                                                        1)
+                                        .seed(123)
                                         .list()
                                         .layer(0, new ConvolutionLayer.Builder(kernelHeight, kernelWidth) //(img-kernel+2*padding)/stride + 1: must be >= 1. Therefore: with p=0, kernel <= img size
                                                         .stride(1, 1).nOut(2).activation(Activation.RELU)
@@ -163,8 +166,7 @@ public class ConvolutionLayerTest {
         DataSet trainInput;
         MultiLayerConfiguration.Builder builder =
                         new NeuralNetConfiguration.Builder()
-                                        .seed(123).iterations(
-                                                        1)
+                                        .seed(123)
                                         .list()
                                         .layer(0, new ConvolutionLayer.Builder(kernelHeight, kernelWidth).stride(1, 0)
                                                         .nOut(2).activation(Activation.RELU)
@@ -198,7 +200,7 @@ public class ConvolutionLayerTest {
         int kernelWidth = 3;
 
         DataSet trainInput;
-        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(123).iterations(1).list()
+        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(123).list()
                         .layer(0, new ConvolutionLayer.Builder().nOut(2).activation(Activation.RELU)
                                         .weightInit(WeightInit.XAVIER).build())
                         .layer(1, new SubsamplingLayer.Builder().poolingType(SubsamplingLayer.PoolingType.MAX).build())
@@ -235,7 +237,7 @@ public class ConvolutionLayerTest {
     public void testCNNInputSetupMNIST() throws Exception {
         INDArray input = getMnistData();
         Layer layer = getMNISTConfig();
-        layer.activate(input);
+        layer.activate(input, false, LayerWorkspaceMgr.noWorkspaces());
 
         assertEquals(input, layer.input());
         assertArrayEquals(input.shape(), layer.input().shape());
@@ -254,7 +256,7 @@ public class ConvolutionLayerTest {
         INDArray input = getMnistData();
 
         Layer layer = getCNNConfig(nChannelsIn, depth, kernelSize, stride, padding);
-        INDArray convActivations = layer.activate(input);
+        INDArray convActivations = layer.activate(input, false, LayerWorkspaceMgr.noWorkspaces());
 
         assertEquals(featureMapWidth, convActivations.size(2));
         assertEquals(depth, convActivations.size(1));
@@ -270,7 +272,7 @@ public class ConvolutionLayerTest {
                         0.99966465, 0.99966465, 0.99966465, 0.98201379, 0.98201379, 0.98201379, 0.98201379, 0.99966465,
                         0.99966465, 0.99966465, 0.99966465}, new int[] {1, 2, 4, 4});
 
-        INDArray convActivations = layer.activate(input);
+        INDArray convActivations = layer.activate(input, false, LayerWorkspaceMgr.noWorkspaces());
 
         assertArrayEquals(expectedOutput.shape(), convActivations.shape());
         assertEquals(expectedOutput, convActivations);
@@ -283,7 +285,7 @@ public class ConvolutionLayerTest {
         ConvolutionLayer layer = new ConvolutionLayer.Builder(kernelSize, stride, padding).nIn(nIn).nOut(nOut)
                         .activation(Activation.SIGMOID).build();
 
-        NeuralNetConfiguration conf = new NeuralNetConfiguration.Builder().iterations(1).layer(layer).build();
+        NeuralNetConfiguration conf = new NeuralNetConfiguration.Builder().layer(layer).build();
 
         int numParams = conf.getLayer().initializer().numParams(conf);
         INDArray params = Nd4j.create(1, numParams);
@@ -441,7 +443,7 @@ public class ConvolutionLayerTest {
         /*
          ----- Input images -----
         example 0:
-        depth 0     depth 1
+        channels 0     channels 1
         [ 0  1  2      [ 9 10 11
           3  4  5       12 13 14
           6  7  8]      15 16 17]
@@ -470,7 +472,7 @@ public class ConvolutionLayerTest {
         //Specifically, it tests the row and column orders after reshaping on im2col is reshaped (both forward and backward pass)
         INDArray input = getInput();
 
-        //im2col in the required order: want [outW,outH,miniBatch,depthIn,kH,kW], but need to input [miniBatch,depth,kH,kW,outH,outW]
+        //im2col in the required order: want [outW,outH,miniBatch,depthIn,kH,kW], but need to input [miniBatch,channels,kH,kW,outH,outW]
         // given the current im2col implementation
         //To get this: create an array of the order we want, permute it to the order required by im2col implementation, and then do im2col on that
         //to get old order from required order: permute(2,3,4,5,1,2)
@@ -481,7 +483,7 @@ public class ConvolutionLayerTest {
         /*
         Expected Output, im2col
         - example 0 -
-            depth 0                        depth 1
+            channels 0                        channels 1
         h0,w0      h0,w1               h0,w0      h0,w1
         0  1     1  2                 9 10      10 11
         3  4     4  5                12 13      13 14
@@ -491,7 +493,7 @@ public class ConvolutionLayerTest {
         6  7     7  8                15 16      16 17
         
         - example 1 -
-            depth 0                        depth 1
+            channels 0                        channels 1
         h0,w0      h0,w1               h0,w0      h0,w1
         18 19     19 20               27 28      28 29
         21 22     22 23               30 31      31 32
@@ -560,7 +562,7 @@ public class ConvolutionLayerTest {
         /*
          ----- Input delta -----
         example 0:
-        depth 0     depth 1
+        channels 0     channels 1
         [ 0  1  2      [ 9 10 11
           3  4  5       12 13 14
           6  7  8]      15 16 17]
@@ -653,17 +655,11 @@ public class ConvolutionLayerTest {
     //////////////////////////////////////////////////////////////////////////////////
 
     private static MultiLayerNetwork getCNNMLNConfig(boolean backprop, boolean pretrain) {
-        Nd4j.ENFORCE_NUMERICAL_STABILITY = true;
-
-        final int numRows = 28;
-        final int numColumns = 28;
-        int nChannels = 1;
         int outputNum = 10;
-        int iterations = 10;
         int seed = 123;
 
         MultiLayerConfiguration.Builder conf =
-                        new NeuralNetConfiguration.Builder().seed(seed).iterations(iterations)
+                        new NeuralNetConfiguration.Builder().seed(seed)
                                         .optimizationAlgo(OptimizationAlgorithm.LINE_GRADIENT_DESCENT).list()
                                         .layer(0, new ConvolutionLayer.Builder(new int[] {10, 10}).nOut(6).build())
                                         .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX,

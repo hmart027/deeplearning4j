@@ -31,8 +31,10 @@ import org.deeplearning4j.nn.graph.vertex.BaseGraphVertex;
 import org.deeplearning4j.nn.graph.vertex.VertexIndices;
 import org.deeplearning4j.nn.layers.BaseOutputLayer;
 import org.deeplearning4j.nn.layers.FrozenLayer;
+import org.deeplearning4j.nn.layers.FrozenLayerWithBackprop;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.primitives.Pair;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 
 import java.util.Arrays;
 
@@ -47,6 +49,7 @@ public class LayerVertex extends BaseGraphVertex {
 
     private Layer layer;
     private final InputPreProcessor layerPreProcessor;
+    private boolean setLayerInput;
 
     /**
      * Create a network input vertex:
@@ -96,34 +99,53 @@ public class LayerVertex extends BaseGraphVertex {
     }
 
     @Override
-    public INDArray doForward(boolean training) {
+    public INDArray doForward(boolean training, LayerWorkspaceMgr workspaceMgr) {
         if (!canDoForward())
             throw new IllegalStateException("Cannot do forward pass: all inputs not set");
+        return layer.activate(training, workspaceMgr);
+    }
 
-        return layer.activate(training);
+    protected void applyPreprocessorAndSetInput(LayerWorkspaceMgr workspaceMgr){
+        //Apply preprocessor
+        INDArray currInput = inputs[0];
+        if (layerPreProcessor != null) {
+            currInput = layerPreProcessor.preProcess(currInput, graph.batchSize(), workspaceMgr);
+        }
+        layer.setInput(currInput, workspaceMgr);
+        setLayerInput = true;
     }
 
     @Override
-    public Pair<Gradient, INDArray[]> doBackward(boolean tbptt) {
+    public Pair<Gradient, INDArray[]> doBackward(boolean tbptt, LayerWorkspaceMgr workspaceMgr) {
         if (!canDoBackward()) {
-            throw new IllegalStateException("Cannot do backward pass: all epsilons not set. Layer " + vertexName
-                            + " (idx " + vertexIndex + ") numInputs " + getNumInputArrays() + "; numOutputs "
-                            + getNumOutputConnections());
+            if(inputs == null || inputs[0] == null){
+                throw new IllegalStateException("Cannot do backward pass: inputs not set. Layer: \"" + vertexName
+                        + "\" (idx " + vertexIndex + "), numInputs: " + getNumInputArrays());
+            } else {
+                throw new IllegalStateException("Cannot do backward pass: all epsilons not set. Layer \"" + vertexName
+                        + "\" (idx " + vertexIndex + "), numInputs :" + getNumInputArrays() + "; numOutputs: "
+                        + getNumOutputConnections());
+            }
+        }
+
+        //Edge case: output layer - never did forward pass hence layer.setInput was never called...
+        if(!setLayerInput){
+            applyPreprocessorAndSetInput(workspaceMgr);
         }
 
         Pair<Gradient, INDArray> pair;
         if (tbptt && layer instanceof RecurrentLayer) {
             //Truncated BPTT for recurrent layers
             pair = ((RecurrentLayer) layer).tbpttBackpropGradient(epsilon,
-                            graph.getConfiguration().getTbpttBackLength());
+                            graph.getConfiguration().getTbpttBackLength(), workspaceMgr);
         } else {
             //Normal backprop
-            pair = layer.backpropGradient(epsilon); //epsTotal may be null for OutputLayers
+            pair = layer.backpropGradient(epsilon, workspaceMgr); //epsTotal may be null for OutputLayers
         }
 
         if (layerPreProcessor != null) {
             INDArray eps = pair.getSecond();
-            eps = layerPreProcessor.backprop(eps, graph.batchSize());
+            eps = layerPreProcessor.backprop(eps, graph.batchSize(), workspaceMgr);
             pair.setSecond(eps);
         }
 
@@ -132,18 +154,14 @@ public class LayerVertex extends BaseGraphVertex {
     }
 
     @Override
-    public void setInput(int inputNumber, INDArray input) {
+    public void setInput(int inputNumber, INDArray input, LayerWorkspaceMgr workspaceMgr) {
         if (inputNumber > 0)
             throw new IllegalArgumentException(
                             "Invalid input number: LayerVertex instances have only 1 input (got inputNumber = "
                                             + inputNumber + ")");
         inputs[inputNumber] = input;
-
-        INDArray currInput = inputs[0];
-        if (layerPreProcessor != null) {
-            currInput = layerPreProcessor.preProcess(currInput, graph.batchSize());
-        }
-        layer.setInput(currInput);
+        setLayerInput = false;
+        applyPreprocessorAndSetInput(workspaceMgr);
     }
 
     @Override
@@ -200,12 +218,45 @@ public class LayerVertex extends BaseGraphVertex {
             }
         }
 
-        if (!(layer instanceof IOutputLayer)) {
+        Layer resolvedLayer = layer;
+        if (layer instanceof FrozenLayerWithBackprop) {
+            resolvedLayer = ((FrozenLayerWithBackprop) layer).getInsideLayer();
+        }
+
+        if (!(resolvedLayer instanceof IOutputLayer)) {
             if (epsilon == null) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    public double computeScore(double l1, double l2, boolean training, LayerWorkspaceMgr workspaceMgr){
+        if(!(layer instanceof IOutputLayer)){
+            throw new UnsupportedOperationException("Cannot compute score: layer is not an output layer (layer class: "
+                    + layer.getClass().getSimpleName());
+        }
+        //Edge case: output layer - never did forward pass hence layer.setInput was never called...
+        if(!setLayerInput){
+            applyPreprocessorAndSetInput(LayerWorkspaceMgr.noWorkspaces()); //TODO
+        }
+
+        IOutputLayer ol = (IOutputLayer)layer;
+        return ol.computeScore(l1, l2, training, workspaceMgr);
+    }
+
+    public INDArray computeScoreForExamples(double l1, double l2, LayerWorkspaceMgr workspaceMgr){
+        if(!(layer instanceof IOutputLayer)){
+            throw new UnsupportedOperationException("Cannot compute score: layer is not an output layer (layer class: "
+                    + layer.getClass().getSimpleName());
+        }
+        //Edge case: output layer - never did forward pass hence layer.setInput was never called...
+        if(!setLayerInput){
+            applyPreprocessorAndSetInput(workspaceMgr);
+        }
+
+        IOutputLayer ol = (IOutputLayer)layer;
+        return ol.computeScoreForExamples(l1, l2, workspaceMgr);
     }
 }

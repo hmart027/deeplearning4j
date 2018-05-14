@@ -2,7 +2,10 @@ package org.deeplearning4j.nn.modelimport.keras.preprocessors;
 
 import lombok.extern.slf4j.Slf4j;
 import org.deeplearning4j.nn.conf.preprocessor.CnnToFeedForwardPreProcessor;
+import org.deeplearning4j.nn.workspace.ArrayType;
 import org.nd4j.linalg.api.ndarray.INDArray;
+import org.nd4j.linalg.api.shape.Shape;
+import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 import org.nd4j.shade.jackson.annotation.JsonCreator;
 import org.nd4j.shade.jackson.annotation.JsonProperty;
 
@@ -18,7 +21,8 @@ public class TensorFlowCnnToFeedForwardPreProcessor extends CnnToFeedForwardPreP
 
     @JsonCreator
     public TensorFlowCnnToFeedForwardPreProcessor(@JsonProperty("inputHeight") int inputHeight,
-                    @JsonProperty("inputWidth") int inputWidth, @JsonProperty("numChannels") int numChannels) {
+                                                  @JsonProperty("inputWidth") int inputWidth,
+                                                  @JsonProperty("numChannels") int numChannels) {
         super(inputHeight, inputWidth, numChannels);
     }
 
@@ -31,22 +35,29 @@ public class TensorFlowCnnToFeedForwardPreProcessor extends CnnToFeedForwardPreP
     }
 
     @Override
-    public INDArray preProcess(INDArray input, int miniBatchSize) {
+    public INDArray preProcess(INDArray input, int miniBatchSize, LayerWorkspaceMgr workspaceMgr) {
         if (input.rank() == 2)
-            return input; //Should usually never happen
+            return workspaceMgr.leverageTo(ArrayType.ACTIVATIONS, input); //Should usually never happen
         /* DL4J convolutional input:       # channels, # rows, # cols
          * TensorFlow convolutional input: # rows, # cols, # channels
          * Theano convolutional input:     # channels, # rows, # cols
          */
-        INDArray permuted = input.permute(0, 2, 3, 1);
-        INDArray flatPermuted = super.preProcess(permuted, miniBatchSize);
-        return flatPermuted;
+        INDArray permuted = workspaceMgr.dup(ArrayType.ACTIVATIONS, input.permute(0, 2, 3, 1), 'c'); //To: [n, h, w, c]
+
+        int[] inShape = input.shape(); //[miniBatch,depthOut,outH,outW]
+        int[] outShape = new int[]{inShape[0], inShape[1] * inShape[2] * inShape[3]};
+
+        return permuted.reshape('c', outShape);
     }
 
     @Override
-    public INDArray backprop(INDArray epsilons, int miniBatchSize) {
-        INDArray epsilonsReshaped = super.backprop(epsilons, miniBatchSize);
-        return epsilonsReshaped.permute(0, 3, 1, 2);
+    public INDArray backprop(INDArray epsilons, int miniBatchSize, LayerWorkspaceMgr workspaceMgr) {
+        if (epsilons.ordering() != 'c' || !Shape.hasDefaultStridesForShape(epsilons))
+            epsilons = workspaceMgr.dup(ArrayType.ACTIVATION_GRAD, epsilons, 'c');
+
+        INDArray epsilonsReshaped = epsilons.reshape('c', epsilons.size(0), inputHeight, inputWidth, numChannels);
+
+        return epsilonsReshaped.permute(0, 3, 1, 2);    //To [n, c, h, w]
     }
 
     @Override

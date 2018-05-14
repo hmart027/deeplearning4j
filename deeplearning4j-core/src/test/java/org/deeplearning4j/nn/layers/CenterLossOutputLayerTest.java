@@ -18,6 +18,7 @@
 
 package org.deeplearning4j.nn.layers;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.datasets.iterator.impl.MnistDataSetIterator;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.ComputationGraphConfiguration;
@@ -53,8 +54,7 @@ import static org.junit.Assert.assertNotEquals;
  *
  * @author Justin Long (@crockpotveggies)
  */
-public class CenterLossOutputLayerTest {
-    private static final Logger log = LoggerFactory.getLogger(CenterLossOutputLayerTest.class);
+public class CenterLossOutputLayerTest extends BaseDL4JTest {
 
     private ComputationGraph getGraph(int numLabels, double lambda) {
         Nd4j.getRandom().setSeed(12345);
@@ -80,13 +80,13 @@ public class CenterLossOutputLayerTest {
         int nChannels = 1; // Number of input channels
         int outputNum = 10; // The number of possible outcomes
 
-        ComputationGraphConfiguration conf = new NeuralNetConfiguration.Builder().seed(12345).iterations(1) // Training iterations as above
+        ComputationGraphConfiguration conf = new NeuralNetConfiguration.Builder().seed(12345) // Training iterations as above
                         .l2(0.0005).weightInit(WeightInit.XAVIER)
                         .updater(new Nesterovs(0.01, 0.9))
                         .graphBuilder().addInputs("input")
                         .setInputTypes(InputType.convolutionalFlat(28, 28, 1))
                         .addLayer("0", new ConvolutionLayer.Builder(5, 5)
-                                        //nIn and nOut specify depth. nIn here is the nChannels and nOut is the number of filters to be applied
+                                        //nIn and nOut specify channels. nIn here is the nChannels and nOut is the number of filters to be applied
                                         .nIn(nChannels).stride(1, 1).nOut(20).activation(Activation.IDENTITY).build(),
                                         "input")
                         .addLayer("1", new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).kernelSize(2, 2)

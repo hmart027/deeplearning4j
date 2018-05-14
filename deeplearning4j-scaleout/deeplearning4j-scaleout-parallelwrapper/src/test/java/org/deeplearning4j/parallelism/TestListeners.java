@@ -11,7 +11,8 @@ import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.graph.ComputationGraph;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.BaseTrainingListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.deeplearning4j.ui.stats.StatsListener;
 import org.deeplearning4j.ui.storage.InMemoryStatsStorage;
 import org.junit.Test;
@@ -23,6 +24,7 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -108,7 +110,7 @@ public class TestListeners {
         assertEquals(2, ss.listWorkerIDsForSession(ss.listSessionIDs().get(0)).size());
     }
 
-    private static void testListenersForModel(Model model, List<IterationListener> listeners) {
+    private static void testListenersForModel(Model model, List<TrainingListener> listeners) {
 
         int nWorkers = 2;
         ParallelWrapper wrapper = new ParallelWrapper.Builder(model).workers(nWorkers).averagingFrequency(1)
@@ -135,13 +137,13 @@ public class TestListeners {
     }
 
 
-    private static class TestListener implements RoutingIterationListener {
+    private static class TestListener extends BaseTrainingListener implements RoutingIterationListener {
 
         private static final AtomicInteger forwardPassCount = new AtomicInteger();
         private static final AtomicInteger backwardPassCount = new AtomicInteger();
         private static final AtomicInteger instanceCount = new AtomicInteger();
-        private static final Set<String> workerIDs = new ConcurrentHashSet<>();
-        private static final Set<String> sessionIDs = new ConcurrentHashSet<>();
+        private static final Set<String> workerIDs = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+        private static final Set<String> sessionIDs = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
         public static void clearCounts() {
             forwardPassCount.set(0);

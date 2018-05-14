@@ -1,5 +1,6 @@
 package org.deeplearning4j.nn.layers.custom;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.DenseLayer;
@@ -21,27 +22,10 @@ import static org.junit.Assert.assertTrue;
 /**
  * Created by Alex on 19/12/2016.
  */
-public class TestCustomActivation {
+public class TestCustomActivation extends BaseDL4JTest {
 
     @Test
     public void testCustomActivationFn() {
-
-        //First: Ensure that the CustomActivation class is registered
-        ObjectMapper mapper = NeuralNetConfiguration.mapper();
-
-        AnnotatedClass ac = AnnotatedClass.construct(IActivation.class,
-                        mapper.getSerializationConfig().getAnnotationIntrospector(), null);
-        Collection<NamedType> types = mapper.getSubtypeResolver().collectAndResolveSubtypes(ac,
-                        mapper.getSerializationConfig(), mapper.getSerializationConfig().getAnnotationIntrospector());
-        boolean found = false;
-        for (NamedType nt : types) {
-            System.out.println(nt);
-            if (nt.getType() == CustomActivation.class)
-                found = true;
-        }
-
-        assertTrue("CustomActivation: not registered with NeuralNetConfiguration mapper", found);
-
         //Second: let's create a MultiLayerCofiguration with one, and check JSON and YAML config actually works...
 
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().updater(new Sgd(0.1)).list()

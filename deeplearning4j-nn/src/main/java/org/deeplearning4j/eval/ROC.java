@@ -8,6 +8,7 @@ import org.deeplearning4j.eval.serde.ROCSerializer;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.api.ops.Op;
 import org.nd4j.linalg.api.ops.impl.transforms.arithmetic.MulOp;
+import org.nd4j.linalg.api.ops.impl.transforms.arithmetic.OldMulOp;
 import org.nd4j.linalg.api.ops.impl.transforms.comparison.CompareAndSet;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.INDArrayIndex;
@@ -24,11 +25,14 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.nd4j.linalg.indexing.NDArrayIndex.all;
+import static org.nd4j.linalg.indexing.NDArrayIndex.interval;
+
 /**
  * ROC (Receiver Operating Characteristic) for binary classifiers.<br>
  * ROC has 2 modes of operation:
- * (a) Thresholded (default, less memory)<br>
- * (b) Exact (use numSteps == 0. May not scale to very large datasets)
+ * (a) Thresholded (less memory)<br>
+ * (b) Exact (default; use numSteps == 0 to set. May not scale to very large datasets)
  *
  * <p>
  * Thresholded Is an approximate method, that (for large datasets) may use significantly less memory than exact..
@@ -122,7 +126,7 @@ public class ROC extends BaseEvaluation<ROC> {
         if (probAndLabel == null || exampleCount == 0) {
             return null;
         }
-        return probAndLabel.get(NDArrayIndex.interval(0, exampleCount), NDArrayIndex.all());
+        return probAndLabel.get(interval(0, exampleCount), all());
     }
 
     private double getAuc() {
@@ -164,7 +168,15 @@ public class ROC extends BaseEvaluation<ROC> {
 
     @Override
     public String stats() {
-        return "AUC: [" + calculateAUC() + "]";
+        StringBuilder sb = new StringBuilder();
+        sb.append("AUC (Area under ROC Curve):                ").append(calculateAUC()).append("\n");
+        sb.append("AUPRC (Area under Precision/Recall Curve): ").append(calculateAUCPR());
+        if(!isExact){
+            sb.append("\n");
+            sb.append("[Note: Thresholded AUC/AUPRC calculation used with ").append(thresholdSteps)
+                    .append(" steps); accuracy may reduced compared to exact mode]");
+        }
+        return sb.toString();
     }
 
     /**
@@ -204,8 +216,8 @@ public class ROC extends BaseEvaluation<ROC> {
                 INDArray newProbAndLabel = Nd4j.create(new int[] {newSize, 2}, 'c');
                 if (exampleCount > 0) {
                     //If statement to handle edge case: no examples, but we need to re-allocate right away
-                    newProbAndLabel.get(NDArrayIndex.interval(0, exampleCount), NDArrayIndex.all()).assign(
-                                    probAndLabel.get(NDArrayIndex.interval(0, exampleCount), NDArrayIndex.all()));
+                    newProbAndLabel.get(interval(0, exampleCount), all()).assign(
+                                    probAndLabel.get(interval(0, exampleCount), all()));
                 }
                 probAndLabel = newProbAndLabel;
             }
@@ -221,10 +233,10 @@ public class ROC extends BaseEvaluation<ROC> {
                 labelClass1 = labels.getColumn(1);
             }
             int currMinibatchSize = labels.size(0);
-            probAndLabel.get(NDArrayIndex.interval(exampleCount, exampleCount + currMinibatchSize),
+            probAndLabel.get(interval(exampleCount, exampleCount + currMinibatchSize),
                             NDArrayIndex.point(0)).assign(probClass1);
 
-            probAndLabel.get(NDArrayIndex.interval(exampleCount, exampleCount + currMinibatchSize),
+            probAndLabel.get(interval(exampleCount, exampleCount + currMinibatchSize),
                             NDArrayIndex.point(1)).assign(labelClass1);
 
             int countClass1CurrMinibatch = labelClass1.sumNumber().intValue();
@@ -286,9 +298,9 @@ public class ROC extends BaseEvaluation<ROC> {
                     ifp = isFalsePositive;
                 } else {
                     isTruePositive = Nd4j.getExecutioner()
-                                    .execAndReturn(new MulOp(predictedClass1, positiveActualClassColumn, itp));
+                                    .execAndReturn(new OldMulOp(predictedClass1, positiveActualClassColumn, itp));
                     isFalsePositive = Nd4j.getExecutioner()
-                                    .execAndReturn(new MulOp(predictedClass1, negativeActualClassColumn, ifp));
+                                    .execAndReturn(new OldMulOp(predictedClass1, negativeActualClassColumn, ifp));
                 }
 
                 //Counts for this batch:
@@ -349,16 +361,16 @@ public class ROC extends BaseEvaluation<ROC> {
              */
 
             INDArray t = Nd4j.create(new int[] {length + 2, 1});
-            t.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()}, sorted.getColumn(0));
+            t.put(new INDArrayIndex[] {interval(1, length + 1), all()}, sorted.getColumn(0));
 
             INDArray linspace = Nd4j.linspace(1, length, length);
             INDArray precision = cumSumPos.div(linspace.reshape(cumSumPos.shape()));
             INDArray prec = Nd4j.create(new int[] {length + 2, 1});
-            prec.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()}, precision);
+            prec.put(new INDArrayIndex[] {interval(1, length + 1), all()}, precision);
 
             //Recall/TPR
             INDArray rec = Nd4j.create(new int[] {length + 2, 1});
-            rec.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()},
+            rec.put(new INDArrayIndex[] {interval(1, length + 1), all()},
                             cumSumPos.div(countActualPositive));
 
             //Edge cases
@@ -487,14 +499,14 @@ public class ROC extends BaseEvaluation<ROC> {
             int length = sorted.size(0);
 
             INDArray t = Nd4j.create(new int[] {length + 2, 1});
-            t.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()}, sorted.getColumn(0));
+            t.put(new INDArrayIndex[] {interval(1, length + 1), all()}, sorted.getColumn(0));
 
             INDArray fpr = Nd4j.create(new int[] {length + 2, 1});
-            fpr.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()},
+            fpr.put(new INDArrayIndex[] {interval(1, length + 1), all()},
                             cumSumNeg.div(countActualNegative));
 
             INDArray tpr = Nd4j.create(new int[] {length + 2, 1});
-            tpr.put(new INDArrayIndex[] {NDArrayIndex.interval(1, length + 1), NDArrayIndex.all()},
+            tpr.put(new INDArrayIndex[] {interval(1, length + 1), all()},
                             cumSumPos.div(countActualPositive));
 
             //Edge cases
@@ -606,6 +618,10 @@ public class ROC extends BaseEvaluation<ROC> {
             return auc;
         }
 
+        if (exampleCount == 0) {
+            return Double.NaN;
+        }
+
         this.auc = getRocCurve().calculateAUC();
         return auc;
     }
@@ -620,6 +636,9 @@ public class ROC extends BaseEvaluation<ROC> {
             return auprc;
         }
 
+        if(exampleCount == 0){
+            return Double.NaN;
+        }
 
         auprc = getPrecisionRecallCurve().calculateAUPRC();
         return auprc;
@@ -642,6 +661,9 @@ public class ROC extends BaseEvaluation<ROC> {
         this.countActualNegative += other.countActualNegative;
         this.auc = null;
         this.auprc = null;
+        this.rocCurve = null;
+        this.prCurve = null;
+
 
         if (isExact) {
             if (other.exampleCount == 0) {
@@ -658,13 +680,13 @@ public class ROC extends BaseEvaluation<ROC> {
                 //Allocate new array
                 int newSize = this.probAndLabel.size(0) + Math.max(other.probAndLabel.size(0), exactAllocBlockSize);
                 INDArray newProbAndLabel = Nd4j.create(newSize, 2);
-                newProbAndLabel.assign(probAndLabel.get(NDArrayIndex.interval(0, exampleCount), NDArrayIndex.all()));
+                newProbAndLabel.put(new INDArrayIndex[]{interval(0,exampleCount), all()}, probAndLabel.get(interval(0, exampleCount), all()));
                 probAndLabel = newProbAndLabel;
             }
 
-            INDArray toPut = other.probAndLabel.get(NDArrayIndex.interval(0, other.exampleCount), NDArrayIndex.all());
+            INDArray toPut = other.probAndLabel.get(interval(0, other.exampleCount), all());
             probAndLabel.put(new INDArrayIndex[] {
-                            NDArrayIndex.interval(exampleCount, exampleCount + other.exampleCount), NDArrayIndex.all()},
+                            interval(exampleCount, exampleCount + other.exampleCount), all()},
                             toPut);
         } else {
             for (Double d : this.counts.keySet()) {

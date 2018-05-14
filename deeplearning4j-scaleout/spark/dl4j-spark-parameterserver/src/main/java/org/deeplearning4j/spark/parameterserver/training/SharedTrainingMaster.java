@@ -13,7 +13,7 @@ import org.deeplearning4j.api.storage.Persistable;
 import org.deeplearning4j.api.storage.StatsStorageRouter;
 import org.deeplearning4j.api.storage.StorageMetaData;
 import org.deeplearning4j.exception.DL4JInvalidConfigException;
-import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.api.TrainingListener;
 import org.deeplearning4j.spark.api.*;
 import org.deeplearning4j.spark.api.stats.SparkTrainingStats;
 import org.deeplearning4j.spark.api.worker.NetBroadcastTuple;
@@ -45,6 +45,8 @@ import org.nd4j.shade.jackson.core.JsonProcessingException;
 import org.nd4j.shade.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -426,8 +428,13 @@ public class SharedTrainingMaster extends BaseTrainingMaster<SharedTrainingResul
                             : graph.getSparkContext().defaultParallelism();
 
         // set current box as controller, if field is unset - switch to next stop
-        if (voidConfiguration.getControllerAddress() == null)
-            voidConfiguration.setControllerAddress(System.getenv("SPARK_PUBLIC_DNS"));
+        if (voidConfiguration.getControllerAddress() == null) {
+            try {
+                String sparkIp = InetAddress.getByName(System.getenv("SPARK_PUBLIC_DNS")).getHostAddress();
+                voidConfiguration.setControllerAddress(sparkIp);
+            } catch (UnknownHostException e) {
+            }
+        }
 
         // next step - is to get ip address that matches specific network mask
         if (voidConfiguration.getControllerAddress() == null && voidConfiguration.getNetworkMask() != null) {
@@ -601,12 +608,12 @@ public class SharedTrainingMaster extends BaseTrainingMaster<SharedTrainingResul
     }
 
     @Override
-    public void setListeners(Collection<IterationListener> listeners) {
+    public void setListeners(Collection<TrainingListener> listeners) {
         // optional stuff actually
     }
 
     @Override
-    public void setListeners(StatsStorageRouter router, Collection<IterationListener> listeners) {
+    public void setListeners(StatsStorageRouter router, Collection<TrainingListener> listeners) {
         // optional stuff actually
     }
 
@@ -669,17 +676,17 @@ public class SharedTrainingMaster extends BaseTrainingMaster<SharedTrainingResul
 
         if (statsStorage != null) {
             Collection<StorageMetaData> meta = finalResult.getListenerMetaData();
-            if (meta != null && meta.size() > 0) {
+            if (meta != null && !meta.isEmpty()) {
                 statsStorage.putStorageMetaData(meta);
             }
 
             Collection<Persistable> staticInfo = finalResult.getListenerStaticInfo();
-            if (staticInfo != null && staticInfo.size() > 0) {
+            if (staticInfo != null && !staticInfo.isEmpty()) {
                 statsStorage.putStaticInfo(staticInfo);
             }
 
             Collection<Persistable> updates = finalResult.getListenerUpdates();
-            if (updates != null && updates.size() > 0) {
+            if (updates != null && !updates.isEmpty()) {
                 statsStorage.putUpdate(updates);
             }
         }
@@ -1206,9 +1213,9 @@ public class SharedTrainingMaster extends BaseTrainingMaster<SharedTrainingResul
 
         public SharedTrainingMaster build() {
             SharedTrainingMaster master = new SharedTrainingMaster(voidConfiguration, numWorkers, rddTrainingApproach,
-                            storageLevel, true, repartitionStrategy, repartition, threshold, minThreshold,
-                            thresholdStep, stepTrigger, stepDelay, shakeFrequency, batchSize, debugLongerIterations,
-                            numWorkersPerNode);
+                            storageLevel, collectTrainingStats, repartitionStrategy, repartition, threshold,
+                            minThreshold, thresholdStep, stepTrigger, stepDelay, shakeFrequency, batchSize,
+                            debugLongerIterations, numWorkersPerNode);
             if (transport != null)
                 master.transport = this.transport;
 

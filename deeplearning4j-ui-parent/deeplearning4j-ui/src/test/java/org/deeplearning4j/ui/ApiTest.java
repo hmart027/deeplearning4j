@@ -1,7 +1,7 @@
 package org.deeplearning4j.ui;
 
 import org.apache.commons.io.IOUtils;
-import org.datavec.api.util.ClassPathResource;
+import org.nd4j.linalg.io.ClassPathResource;
 import org.deeplearning4j.plot.BarnesHutTsne;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * @author Adam Gibson
  */
-public class ApiTest extends BaseUiServerTest {
+public class ApiTest {
     @Test
     @Ignore
     public void testUpdateCoords() throws Exception {

@@ -1,5 +1,6 @@
 package org.deeplearning4j.exceptions;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.exception.DL4JException;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
@@ -14,7 +15,7 @@ import static org.junit.Assert.fail;
 /**
  * A set of tests to ensure that useful exceptions are thrown on invalid input
  */
-public class TestInvalidInput {
+public class TestInvalidInput extends BaseDL4JTest {
 
     @Test
     public void testInputNinMismatchDense() {
@@ -100,7 +101,7 @@ public class TestInvalidInput {
 
     @Test
     public void testInputNinMismatchConvolutional() {
-        //Rank 4 input, but input depth does not match nIn depth
+        //Rank 4 input, but input channels does not match nIn channels
 
         int h = 16;
         int w = 16;

@@ -94,6 +94,13 @@ public class ROCMultiClass extends BaseEvaluation<ROCMultiClass> {
             }
 
             sb.append("Average AUC: ").append(String.format("%-12." + printPrecision + "f", calculateAverageAUC()));
+
+            if(thresholdSteps > 0){
+                sb.append("\n");
+                sb.append("[Note: Thresholded AUC/AUPRC calculation used with ").append(thresholdSteps)
+                        .append(" steps); accuracy may reduced compared to exact mode]");
+            }
+
         } else {
             //Empty evaluation
             sb.append("\n-- No Data --\n");
@@ -194,6 +201,18 @@ public class ROCMultiClass extends BaseEvaluation<ROCMultiClass> {
         double sum = 0.0;
         for (int i = 0; i < underlying.length; i++) {
             sum += calculateAUC(i);
+        }
+
+        return sum / underlying.length;
+    }
+
+    /**
+     * Calculate the macro-average (one-vs-all) AUCPR (area under precision recall curve) for all classes
+     */
+    public double calculateAverageAUCPR() {
+        double sum = 0.0;
+        for (int i = 0; i < underlying.length; i++) {
+            sum += calculateAUCPR(i);
         }
 
         return sum / underlying.length;

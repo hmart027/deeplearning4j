@@ -18,8 +18,10 @@
 
 package org.deeplearning4j.eval;
 
+import com.google.common.base.Preconditions;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.deeplearning4j.eval.meta.Prediction;
@@ -53,8 +55,22 @@ import java.util.*;
  *   argmax / 0.5)<br>
  * - Custom cost array, using {@link #Evaluation(INDArray)} or {@link #Evaluation(List, INDArray)} for multi-class <br>
  * <br>
+ * Note: Care should be taken when using the Evaluation class for binary classification metrics such as F1, precision,
+ * recall, etc. There are a number of cases to consider:<br>
+ * 1. For binary classification (1 or 2 network outputs)<br>
+ *    a) Default behaviour: class 1 is assumed as the positive class. Consequently, no-arg methods such as {@link #f1()},
+ *       {@link #precision()}, {@link #recall()} etc will report the binary metric for class 1 only<br>
+ *    b) To set class 0 as the positive class instead of class 1 (the default), use {@link #Evaluation(int, Integer)} or
+ *       {@link #Evaluation(double, Integer)} or {@link #setBinaryPositiveClass(Integer)}. Then, {@link #f1()},
+ *       {@link #precision()}, {@link #recall()} etc will report the binary metric for class 0 only.<br>
+ *    c) To use macro-averaged metrics over both classes for binary classification (uncommon and usually not advisable)
+ *       specify 'null' as the argument (instead of 0 or 1) as per (b) above<br>
+ * 2. For multi-class classification, binary metric methods such as {@link #f1()}, {@link #precision()}, {@link #recall()}
+ *    will report macro-average (of the one-vs-all) binary metrics. Note that you can specify micro vs. macro averaging
+ *    using {@link #f1(EvaluationAveraging)} and similar methods<br>
+ * <br>
  * Note that setting a custom binary decision threshold is only possible for the binary case (1 or 2 outputs) and cannot
- * be used if the number of classes exceeds 2. Predictions with probablity > threshold are considered to be class 1,
+ * be used if the number of classes exceeds 2. Predictions with probability > threshold are considered to be class 1,
  * and are considered class 0 otherwise.<br>
  * <br>
  * Cost arrays (a row vector, of size equal to the number of outputs) modify the evaluation process: instead of simply
@@ -70,9 +86,15 @@ import java.util.*;
 @Setter
 @JsonIgnoreProperties({"confusionMatrixMetaData"})
 public class Evaluation extends BaseEvaluation<Evaluation> {
+
+    public enum Metric {ACCURACY, F1, PRECISION, RECALL, GMEASURE, MCC}
+
     //What to output from the precision/recall function when we encounter an edge case
     protected static final double DEFAULT_EDGE_VALUE = 0.0;
 
+    protected static final int CONFUSION_PRINT_MAX_CLASSES = 20;
+
+    protected Integer binaryPositiveClass = 1;  //Used *only* for binary classification; default value here to 1 for legacy JSON loading
     protected final int topN;
     protected int topNCorrectCount = 0;
     protected int topNTotalCount = 0; //Could use topNCountCorrect / (double)getNumRowCounter() - except for eval(int,int), hence separate counters
@@ -98,16 +120,35 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     // Empty constructor
     public Evaluation() {
         this.topN = 1;
+        this.binaryPositiveClass = 1;
     }
 
     /**
-     * The number of classes to account
-     * for in the evaluation
+     * The number of classes to account for in the evaluation
      * @param numClasses the number of classes to account for in the evaluation
      */
     public Evaluation(int numClasses) {
-        this(createLabels(numClasses), 1);
+        this(numClasses, (numClasses == 2 ? 1 : null));
     }
+
+    /**
+     * Constructor for specifying the number of classes, and optionally the positive class for binary classification.
+     * See Evaluation javadoc for more details on evaluation in the binary case
+     *
+     * @param numClasses          The number of classes for the evaluation. Must be 2, if binaryPositiveClass is non-null
+     * @param binaryPositiveClass If non-null, the positive class (0 or 1).
+     */
+    public Evaluation(int numClasses, Integer binaryPositiveClass){
+        this(createLabels(numClasses), 1);
+        if(binaryPositiveClass != null){
+            Preconditions.checkArgument(binaryPositiveClass == 0 || binaryPositiveClass == 1,
+                    "Only 0 and 1 are valid inputs for binaryPositiveClass; got " + binaryPositiveClass);
+            Preconditions.checkArgument(numClasses == 2, "Cannot set binaryPositiveClass argument " +
+                    "when number of classes is not equal to 2 (got: numClasses=" + numClasses + ")");
+        }
+        this.binaryPositiveClass = binaryPositiveClass;
+    }
+
 
     /**
      * The labels to include with the evaluation.
@@ -145,17 +186,39 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
             createConfusion(labels.size());
         }
         this.topN = topN;
+        if(labels != null && labels.size() == 2){
+            this.binaryPositiveClass = 1;
+        }
     }
 
     /**
      * Create an evaluation instance with a custom binary decision threshold. Note that binary decision thresholds can
-     * only be used with binary classifiers.
+     * only be used with binary classifiers.<br>
+     * Defaults to class 1 for the positive class - see class javadoc, and use {@link #Evaluation(double, Integer)} to
+     * change this.
      *
      * @param binaryDecisionThreshold Decision threshold to use for binary predictions
      */
     public Evaluation(double binaryDecisionThreshold) {
+        this(binaryDecisionThreshold, 1);
+    }
+
+    /**
+     * Create an evaluation instance with a custom binary decision threshold. Note that binary decision thresholds can
+     * only be used with binary classifiers.<br>
+     * This constructor also allows the user to specify the positive class for binary classification. See class javadoc
+     * for more details.
+     *
+     * @param binaryDecisionThreshold Decision threshold to use for binary predictions
+     */
+    public Evaluation(double binaryDecisionThreshold, @NonNull Integer binaryPositiveClass) {
+        if(binaryPositiveClass != null){
+            Preconditions.checkArgument(binaryPositiveClass == 0 || binaryPositiveClass == 1,
+                    "Only 0 and 1 are valid inputs for binaryPositiveClass; got " + binaryPositiveClass);
+        }
         this.binaryDecisionThreshold = binaryDecisionThreshold;
         this.topN = 1;
+        this.binaryPositiveClass = binaryPositiveClass;
     }
 
     /**
@@ -178,7 +241,7 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
      * @param costArray Row vector cost array. May be null
      */
     public Evaluation(List<String> labels, INDArray costArray) {
-        if (costArray != null && !costArray.isRowVector()) {
+        if (costArray != null && !costArray.isRowVectorOrScalar()) {
             throw new IllegalArgumentException("Invalid cost array: must be a row vector (got shape: "
                             + Arrays.toString(costArray.shape()) + ")");
         }
@@ -188,6 +251,13 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
         this.labelsList = labels;
         this.costArray = costArray;
         this.topN = 1;
+    }
+
+    protected int numClasses(){
+        if(labelsList != null){
+            return labelsList.size();
+        }
+        return confusion().getClasses().size();
     }
 
     @Override
@@ -496,6 +566,10 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
         }
     }
 
+    /**
+     * Report the classification statistics as a String
+     * @return Classification statistics as a String
+     */
     public String stats() {
         return stats(false);
     }
@@ -507,6 +581,21 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
      * @return A (multi-line) String with accuracy, precision, recall, f1 score etc
      */
     public String stats(boolean suppressWarnings) {
+        return stats(suppressWarnings, numClasses() <= CONFUSION_PRINT_MAX_CLASSES, numClasses() > CONFUSION_PRINT_MAX_CLASSES);
+    }
+
+    /**
+     * Method to obtain the classification report as a String
+     *
+     * @param suppressWarnings whether or not to output warnings related to the evaluation results
+     * @param includeConfusion whether the confusion matrix should be included it the returned stats or not
+     * @return A (multi-line) String with accuracy, precision, recall, f1 score etc
+     */
+    public String stats(boolean suppressWarnings, boolean includeConfusion){
+        return stats(suppressWarnings, includeConfusion, false);
+    }
+
+    private String stats(boolean suppressWarnings, boolean includeConfusion, boolean logConfusionSizeWarning){
         String actual, predicted;
         StringBuilder builder = new StringBuilder().append("\n");
         StringBuilder warnings = new StringBuilder();
@@ -519,17 +608,6 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
         List<Integer> falsePositivesWarningClasses = new ArrayList<>();
         List<Integer> falseNegativesWarningClasses = new ArrayList<>();
         for (Integer clazz : classes) {
-            actual = resolveLabelForClass(clazz);
-            //Output confusion matrix
-            for (Integer clazz2 : classes) {
-                int count = confusion().getCount(clazz, clazz2);
-                if (count != 0) {
-                    predicted = resolveLabelForClass(clazz2);
-                    builder.append(String.format("Examples labeled as %s classified by model as %s: %d times%n", actual,
-                                    predicted, count));
-                }
-            }
-
             //Output possible warnings regarding precision/recall calculation
             if (!suppressWarnings && truePositives.getCount(clazz) == 0) {
                 if (falsePositives.getCount(clazz) == 0) {
@@ -540,15 +618,13 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
                 }
             }
         }
-        if (falsePositivesWarningClasses.size() > 0) {
+
+        if (!falsePositivesWarningClasses.isEmpty()) {
             warningHelper(warnings, falsePositivesWarningClasses, "precision");
         }
-        if (falseNegativesWarningClasses.size() > 0) {
+        if (!falseNegativesWarningClasses.isEmpty()) {
             warningHelper(warnings, falseNegativesWarningClasses, "recall");
         }
-
-        builder.append("\n");
-        builder.append(warnings);
 
         int nClasses = confusion.getClasses().size();
         DecimalFormat df = new DecimalFormat("0.0000");
@@ -556,7 +632,7 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
         double precisionMacro = precision(EvaluationAveraging.Macro);
         double recallMacro = recall(EvaluationAveraging.Macro);
         double f1Macro = f1(EvaluationAveraging.Macro);
-        builder.append("\n==========================Scores========================================");
+        builder.append("\n========================Evaluation Metrics========================");
         builder.append("\n # of classes:    ").append(nClasses);
         builder.append("\n Accuracy:        ").append(format(df, acc));
         if (topN > 1) {
@@ -587,9 +663,16 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
                 builder.append("es");
             builder.append(" excluded from average)");
         }
-        if (nClasses > 2) {
+        if (nClasses > 2 || binaryPositiveClass == null) {
             builder.append("\nPrecision, recall & F1: macro-averaged (equally weighted avg. of ").append(nClasses)
                             .append(" classes)");
+        }
+        if(nClasses == 2 && binaryPositiveClass != null){
+            builder.append("\nPrecision, recall & F1: reported for positive class (class ").append(binaryPositiveClass);
+            if(labelsList != null){
+                builder.append(" - \"").append(labelsList.get(binaryPositiveClass)).append("\"");
+            }
+            builder.append(") only");
         }
         if (binaryDecisionThreshold != null) {
             builder.append("\nBinary decision threshold: ").append(binaryDecisionThreshold);
@@ -600,8 +683,75 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
         //Note that we could report micro-averaged too - but these are the same as accuracy
         //"Note that for “micro”-averaging in a multiclass setting with all labels included will produce equal precision, recall and F,"
         //http://scikit-learn.org/stable/modules/model_evaluation.html
-        builder.append("\n========================================================================");
+
+        builder.append("\n\n");
+        builder.append(warnings);
+
+        if(includeConfusion){
+            builder.append("\n=========================Confusion Matrix=========================\n");
+            builder.append(confusionMatrix());
+        } else if(logConfusionSizeWarning){
+            builder.append("\n\nNote: Confusion matrix not generated due to space requirements for ")
+                    .append(nClasses).append(" classes.\n")
+                    .append("Use stats(false,true) to generate anyway");
+        }
+
+        builder.append("\n==================================================================");
         return builder.toString();
+    }
+
+    /**
+     * Get the confusion matrix as a String
+     * @return Confusion matrix as a String
+     */
+    public String confusionMatrix(){
+        int nClasses = numClasses();
+
+        if(confusion == null){
+            return "Confusion matrix: <no data>";
+        }
+
+        //First: work out the maximum count
+        List<Integer> classes = confusion.getClasses();
+        int maxCount = 1;
+        for (Integer i : classes) {
+            for (Integer j : classes) {
+                int count = confusion().getCount(i, j);
+                maxCount = Math.max(maxCount, count);
+            }
+        }
+        maxCount = Math.max(maxCount, nClasses);    //Include this as header might be bigger than actual values
+
+        int numDigits = (int)Math.ceil(Math.log10(maxCount));
+        if(numDigits < 1)
+            numDigits = 1;
+        String digitFormat = "%" + (numDigits+1) + "d";
+
+        StringBuilder sb = new StringBuilder();
+        //Build header:
+        for( int i=0; i<nClasses; i++ ){
+            sb.append(String.format(digitFormat, i));
+        }
+        sb.append("\n");
+        int numDividerChars = (numDigits+1) * nClasses + 1;
+        for( int i=0; i<numDividerChars; i++ ){
+            sb.append("-");
+        }
+        sb.append("\n");
+
+        //Build each row:
+        for( int actual=0; actual<nClasses; actual++){
+            String actualName = resolveLabelForClass(actual);
+            for( int predicted=0; predicted<nClasses; predicted++){
+                int count = confusion.getCount(actual, predicted);
+                sb.append(String.format(digitFormat, count));
+            }
+            sb.append(" | ").append(actual).append(" = ").append(actualName).append("\n");
+        }
+
+        sb.append("\nConfusion matrix format: Actual (rowClass) predicted as (columnClass) N times");
+
+        return sb.toString();
     }
 
     private static String format(DecimalFormat f, double num) {
@@ -632,7 +782,7 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     }
 
     /**
-     * Returns the precision for a given label
+     * Returns the precision for a given class label
      *
      * @param classLabel the label
      * @return the precision for the label
@@ -655,13 +805,20 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     }
 
     /**
-     * Precision based on guesses so far
-     * Takes into account all known classes and outputs average precision across all of them.
-     * i.e., is macro-averaged precision, equivalent to {@code precision(EvaluationAveraging.Macro)}
+     * Precision based on guesses so far.<br>
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged precision, equivalent to {@code precision(EvaluationAveraging.Macro)}<br>
      *
      * @return the total precision based on guesses so far
      */
     public double precision() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return precision(binaryPositiveClass);
+        }
         return precision(EvaluationAveraging.Macro);
     }
 
@@ -795,12 +952,20 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     }
 
     /**
-     * Recall based on guesses so far
-     * Takes into account all known classes and outputs average recall across all of them
+     * Recall based on guesses so far<br>
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged recall, equivalent to {@code recall(EvaluationAveraging.Macro)}<br>
      *
      * @return the recall for the outcomes
      */
     public double recall() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return recall(binaryPositiveClass);
+        }
         return recall(EvaluationAveraging.Macro);
     }
 
@@ -867,12 +1032,21 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     }
 
     /**
-     * False positive rate based on guesses so far
-     * Takes into account all known classes and outputs average fpr across all of them
+     * False positive rate based on guesses so far<br>
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged false positive rate, equivalent to
+     *    {@code falsePositiveRate(EvaluationAveraging.Macro)}<br>
      *
      * @return the fpr for the outcomes
      */
     public double falsePositiveRate() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return falsePositiveRate(binaryPositiveClass);
+        }
         return falsePositiveRate(EvaluationAveraging.Macro);
     }
 
@@ -930,11 +1104,20 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
 
     /**
      * False negative rate based on guesses so far
-     * Takes into account all known classes and outputs average fnr across all of them
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged false negative rate, equivalent to
+     *    {@code falseNegativeRate(EvaluationAveraging.Macro)}<br>
      *
      * @return the fnr for the outcomes
      */
     public double falseNegativeRate() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return falseNegativeRate(binaryPositiveClass);
+        }
         return falseNegativeRate(EvaluationAveraging.Macro);
     }
 
@@ -968,11 +1151,20 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
 
     /**
      * False Alarm Rate (FAR) reflects rate of misclassified to classified records
-     * http://ro.ecu.edu.au/cgi/viewcontent.cgi?article=1058&context=isw
+     * http://ro.ecu.edu.au/cgi/viewcontent.cgi?article=1058&context=isw<br>
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged false alarm rate)
      *
      * @return the fpr for the outcomes
      */
     public double falseAlarmRate() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return (falsePositiveRate(binaryPositiveClass) + falseNegativeRate(binaryPositiveClass)) / 2.0;
+        }
         return (falsePositiveRate() + falseNegativeRate()) / 2.0;
     }
 
@@ -1019,16 +1211,26 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
     }
 
     /**
-     * Calculate the (macro) average F1 score across all classes
-     *
-     * TP: true positive
-     * FP: False Positive
-     * FN: False Negative
-     * F1 score: 2 * TP / (2TP + FP + FN)
+     * Calculate the F1 score<br>
+     * F1 score is defined as:<br>
+     * TP: true positive<br>
+     * FP: False Positive<br>
+     * FN: False Negative<br>
+     * F1 score: 2 * TP / (2TP + FP + FN)<br>
+     * <br>
+     * Note: value returned will differ depending on number of classes and settings.<br>
+     * 1. For binary classification, if the positive class is set (via default value of 1, via constructor,
+     *    or via {@link #setBinaryPositiveClass(Integer)}), the returned value will be for the specified positive class
+     *    only.<br>
+     * 2. For the multi-class case, or when {@link #getBinaryPositiveClass()} is null, the returned value is macro-averaged
+     *    across all classes. i.e., is macro-averaged f1, equivalent to {@code f1(EvaluationAveraging.Macro)}<br>
      *
      * @return the f1 score or harmonic mean of precision and recall based on current guesses
      */
     public double f1() {
+        if(binaryPositiveClass != null && numClasses() == 2){
+            return f1(binaryPositiveClass);
+        }
         return f1(EvaluationAveraging.Macro);
     }
 
@@ -1206,9 +1408,6 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
             throw new UnsupportedOperationException("Unknown averaging approach: " + averaging);
         }
     }
-
-
-    // Access counter methods
 
     /**
      * True positives: correctly rejected
@@ -1614,6 +1813,25 @@ public class Evaluation extends BaseEvaluation<Evaluation> {
             out.add(new Prediction(actualClass, predictedClass, meta));
         }
         return out;
+    }
+
+    public double scoreForMetric(Metric metric){
+        switch (metric){
+            case ACCURACY:
+                return accuracy();
+            case F1:
+                return f1();
+            case PRECISION:
+                return precision();
+            case RECALL:
+                return recall();
+            case GMEASURE:
+                return gMeasure(EvaluationAveraging.Macro);
+            case MCC:
+                return matthewsCorrelation(EvaluationAveraging.Macro);
+            default:
+                throw new IllegalStateException("Unknown metric: " + metric);
+        }
     }
 
 

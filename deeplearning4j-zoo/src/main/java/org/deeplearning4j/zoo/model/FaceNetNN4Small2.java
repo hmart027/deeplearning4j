@@ -1,5 +1,7 @@
 package org.deeplearning4j.zoo.model;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.NoArgsConstructor;
 import org.deeplearning4j.nn.api.Model;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
@@ -17,6 +19,7 @@ import org.deeplearning4j.zoo.ZooType;
 import org.deeplearning4j.zoo.model.helper.FaceNetHelper;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.learning.config.Adam;
+import org.nd4j.linalg.learning.config.IUpdater;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
 /**
@@ -26,29 +29,20 @@ import org.nd4j.linalg.lossfunctions.LossFunctions;
  *
  * Revised and consolidated version by @crockpotveggies
  */
-@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class FaceNetNN4Small2 extends ZooModel {
 
-    private int[] inputShape = new int[] {3, 96, 96};
-    private int numLabels;
-    private long seed;
-    private int iterations;
-    private Activation transferFunction = Activation.RELU;
-    private WorkspaceMode workspaceMode;
-    private ConvolutionLayer.AlgoMode cudnnAlgoMode;
+    @Builder.Default private long seed = 1234;
+    @Builder.Default private int[] inputShape = new int[] {3, 96, 96};
+    @Builder.Default private int numClasses = 0;
+    @Builder.Default private IUpdater updater = new Adam(0.1, 0.9, 0.999, 0.01);
+    @Builder.Default private Activation transferFunction = Activation.RELU;
+    @Builder.Default CacheMode cacheMode = CacheMode.NONE;
+    @Builder.Default private WorkspaceMode workspaceMode = WorkspaceMode.ENABLED;
+    @Builder.Default private ConvolutionLayer.AlgoMode cudnnAlgoMode = ConvolutionLayer.AlgoMode.PREFER_FASTEST;
 
-    public FaceNetNN4Small2(int numLabels, long seed, int iterations) {
-        this(numLabels, seed, iterations, WorkspaceMode.SEPARATE);
-    }
-
-    public FaceNetNN4Small2(int numLabels, long seed, int iterations, WorkspaceMode workspaceMode) {
-        this.numLabels = numLabels;
-        this.seed = seed;
-        this.iterations = iterations;
-        this.workspaceMode = workspaceMode;
-        this.cudnnAlgoMode = workspaceMode == WorkspaceMode.SINGLE ? ConvolutionLayer.AlgoMode.PREFER_FASTEST
-                        : ConvolutionLayer.AlgoMode.NO_WORKSPACE;
-    }
+    private FaceNetNN4Small2() {}
 
     @Override
     public String pretrainedUrl(PretrainedType pretrainedType) {
@@ -61,11 +55,6 @@ public class FaceNetNN4Small2 extends ZooModel {
     }
 
     @Override
-    public ZooType zooType() {
-        return ZooType.FACENETNN4SMALL2;
-    }
-
-    @Override
     public Class<? extends Model> modelType() {
         return ComputationGraph.class;
     }
@@ -74,10 +63,17 @@ public class FaceNetNN4Small2 extends ZooModel {
         int embeddingSize = 128;
 
         ComputationGraphConfiguration.GraphBuilder graph = new NeuralNetConfiguration.Builder().seed(seed)
-                        .iterations(iterations).activation(Activation.IDENTITY)
+                        .activation(Activation.IDENTITY)
                         .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
-                        .updater(new Adam(0.1, 0.9, 0.999, 0.01)).weightInit(WeightInit.RELU)
-                        .l2(5e-5).miniBatch(true).convolutionMode(ConvolutionMode.Same)
+                        .updater(updater)
+                        .weightInit(WeightInit.RELU)
+                        .l2(5e-5)
+                        .miniBatch(true)
+                        .cacheMode(cacheMode)
+                        .trainingWorkspaceMode(workspaceMode)
+                        .inferenceWorkspaceMode(workspaceMode)
+                        .cudnnAlgoMode(cudnnAlgoMode)
+                        .convolutionMode(ConvolutionMode.Same)
                         .graphBuilder();
 
 
@@ -332,7 +328,7 @@ public class FaceNetNN4Small2 extends ZooModel {
                         .addVertex("embeddings", new L2NormalizeVertex(new int[] {}, 1e-6), "bottleneck")
                         .addLayer("lossLayer", new CenterLossOutputLayer.Builder()
                                         .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
-                                        .activation(Activation.SOFTMAX).nIn(128).nOut(numLabels).lambda(1e-4).alpha(0.9)
+                                        .activation(Activation.SOFTMAX).nIn(128).nOut(numClasses).lambda(1e-4).alpha(0.9)
                                         .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer).build(),
                                         "embeddings")
                         .setOutputs("lossLayer").backprop(true).pretrain(false)

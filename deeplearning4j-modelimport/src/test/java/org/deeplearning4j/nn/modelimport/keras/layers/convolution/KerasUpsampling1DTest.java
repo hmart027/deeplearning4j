@@ -52,7 +52,7 @@ public class KerasUpsampling1DTest {
         buildUpsampling1DLayer(conf2, keras2);
     }
 
-    public void buildUpsampling1DLayer(KerasLayerConfiguration conf, Integer kerasVersion) throws Exception {
+    private void buildUpsampling1DLayer(KerasLayerConfiguration conf, Integer kerasVersion) throws Exception {
         Map<String, Object> layerConfig = new HashMap<>();
         layerConfig.put(conf.getLAYER_FIELD_CLASS_NAME(), conf.getLAYER_CLASS_NAME_UPSAMPLING_1D());
         Map<String, Object> config = new HashMap<>();
@@ -63,7 +63,7 @@ public class KerasUpsampling1DTest {
 
         Upsampling1D layer = new KerasUpsampling1D(layerConfig).getUpsampling1DLayer();
         assertEquals(LAYER_NAME, layer.getLayerName());
-        assertEquals(size, layer.getSize());
+        assertEquals(size, layer.getSize()[0]);
     }
 
 }

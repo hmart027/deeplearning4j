@@ -3,9 +3,12 @@ package org.deeplearning4j.gradientcheck;
 import org.apache.commons.io.IOUtils;
 import org.datavec.api.records.reader.RecordReader;
 import org.datavec.api.split.FileSplit;
-import org.datavec.api.util.ClassPathResource;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import org.nd4j.linalg.io.ClassPathResource;
 import org.datavec.image.recordreader.objdetect.ObjectDetectionRecordReader;
 import org.datavec.image.recordreader.objdetect.impl.VocLabelProvider;
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.datasets.datavec.RecordReaderDataSetIterator;
 import org.deeplearning4j.nn.conf.ConvolutionMode;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
@@ -42,7 +45,7 @@ import static org.junit.Assert.assertTrue;
 /**
  * @author Alex Black
  */
-public class YoloGradientCheckTests {
+public class YoloGradientCheckTests extends BaseDL4JTest {
     private static final boolean PRINT_RESULTS = true;
     private static final boolean RETURN_ON_FIRST_FAILURE = false;
     private static final double DEFAULT_EPS = 1e-6;
@@ -50,8 +53,11 @@ public class YoloGradientCheckTests {
     private static final double DEFAULT_MIN_ABS_ERROR = 1e-8;
 
     static {
-        DataTypeUtil.setDTypeForContext(DataBuffer.Type.DOUBLE);
+        Nd4j.setDataType(DataBuffer.Type.DOUBLE);
     }
+
+    @Rule
+    public TemporaryFolder testDir = new TemporaryFolder();
 
     @Test
     public void testYoloOutputLayer() {
@@ -62,7 +68,7 @@ public class YoloGradientCheckTests {
         int c = 3;
         int b = 3;
 
-        int yoloDepth = 5*b + c;
+        int yoloDepth = b * (5 + c);
         Activation a = Activation.TANH;
 
         Nd4j.getRandom().setSeed(1234567);
@@ -143,7 +149,7 @@ public class YoloGradientCheckTests {
         InputStream is3 = new ClassPathResource("yolo/VOC_TwoImage/JPEGImages/2008_003344.jpg").getInputStream();
         InputStream is4 = new ClassPathResource("yolo/VOC_TwoImage/Annotations/2008_003344.xml").getInputStream();
 
-        File dir = Files.createTempDirectory("testYoloOverfitting").toFile();
+        File dir = testDir.newFolder("testYoloOverfitting");
         File jpg = new File(dir, "JPEGImages");
         File annot = new File(dir, "Annotations");
         jpg.mkdirs();
@@ -185,7 +191,7 @@ public class YoloGradientCheckTests {
         rr.initialize(new FileSplit(jpg));
 
         int nClasses = rr.getLabels().size();
-        int depthOut = 5*bbPriors.size(0) + nClasses;
+        int depthOut = bbPriors.size(0) * (5 + nClasses);
 
 
         DataSetIterator iter = new RecordReaderDataSetIterator(rr,2,1,1,true);

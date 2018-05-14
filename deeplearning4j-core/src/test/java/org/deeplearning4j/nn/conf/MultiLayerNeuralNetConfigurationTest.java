@@ -18,6 +18,7 @@
 
 package org.deeplearning4j.nn.conf;
 
+import org.deeplearning4j.BaseDL4JTest;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.distribution.NormalDistribution;
@@ -27,9 +28,10 @@ import org.deeplearning4j.nn.conf.preprocessor.CnnToFeedForwardPreProcessor;
 import org.deeplearning4j.nn.conf.weightnoise.DropConnect;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
-import org.deeplearning4j.optimize.api.IterationListener;
 import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.Adam;
@@ -38,7 +40,6 @@ import org.nd4j.linalg.lossfunctions.LossFunctions;
 
 import java.io.*;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Properties;
 
 import static org.junit.Assert.*;
@@ -46,12 +47,15 @@ import static org.junit.Assert.*;
 /**
  * Created by agibsonccc on 11/27/14.
  */
-public class MultiLayerNeuralNetConfigurationTest {
+public class MultiLayerNeuralNetConfigurationTest extends BaseDL4JTest {
+
+    @Rule
+    public TemporaryFolder testDir = new TemporaryFolder();
 
     @Test
     public void testJson() throws Exception {
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().list()
-                        .layer(0, new RBM.Builder().dist(new NormalDistribution(1, 1e-1)).build())
+                        .layer(0, new DenseLayer.Builder().dist(new NormalDistribution(1, 1e-1)).build())
                         .inputPreProcessor(0, new CnnToFeedForwardPreProcessor()).build();
 
         String json = conf.toJson();
@@ -62,7 +66,7 @@ public class MultiLayerNeuralNetConfigurationTest {
         props.put("json", json);
         String key = props.getProperty("json");
         assertEquals(json, key);
-        File f = new File("props");
+        File f = testDir.newFile("props");
         f.deleteOnExit();
         BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(f));
         props.store(bos, "");
@@ -85,11 +89,10 @@ public class MultiLayerNeuralNetConfigurationTest {
         final int numColumns = 76;
         int nChannels = 3;
         int outputNum = 6;
-        int iterations = 10;
         int seed = 123;
 
         //setup the network
-        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed).iterations(iterations)
+        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed)
                         .l1(1e-1).l2(2e-4).weightNoise(new DropConnect(0.5)).miniBatch(true)
                         .optimizationAlgo(OptimizationAlgorithm.CONJUGATE_GRADIENT).list()
                         .layer(0, new ConvolutionLayer.Builder(5, 5).nOut(5).dropOut(0.5).weightInit(WeightInit.XAVIER)
@@ -119,11 +122,10 @@ public class MultiLayerNeuralNetConfigurationTest {
         final int numColumns = 76;
         int nChannels = 3;
         int outputNum = 6;
-        int iterations = 10;
         int seed = 123;
 
         //setup the network
-        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed).iterations(iterations)
+        MultiLayerConfiguration.Builder builder = new NeuralNetConfiguration.Builder().seed(seed)
                 .l1(1e-1).l2(2e-4).dropOut(0.5).miniBatch(true)
                 .optimizationAlgo(OptimizationAlgorithm.CONJUGATE_GRADIENT).list()
                 .layer(new ConvolutionLayer.Builder(5, 5).nOut(5).dropOut(0.5).weightInit(WeightInit.XAVIER)
@@ -165,7 +167,7 @@ public class MultiLayerNeuralNetConfigurationTest {
     @Test
     public void testYaml() throws Exception {
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().list()
-                        .layer(0, new RBM.Builder().dist(new NormalDistribution(1, 1e-1)).build())
+                        .layer(0, new DenseLayer.Builder().dist(new NormalDistribution(1, 1e-1)).build())
                         .inputPreProcessor(0, new CnnToFeedForwardPreProcessor()).build();
         String json = conf.toYaml();
         MultiLayerConfiguration from = MultiLayerConfiguration.fromYaml(json);
@@ -175,7 +177,7 @@ public class MultiLayerNeuralNetConfigurationTest {
         props.put("json", json);
         String key = props.getProperty("json");
         assertEquals(json, key);
-        File f = new File("props");
+        File f = testDir.newFile("props");
         f.deleteOnExit();
         BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(f));
         props.store(bos, "");
@@ -194,7 +196,7 @@ public class MultiLayerNeuralNetConfigurationTest {
 
     @Test
     public void testClone() {
-        MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().list().layer(0, new RBM.Builder().build())
+        MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().list().layer(0, new DenseLayer.Builder().build())
                         .layer(1, new OutputLayer.Builder().build())
                         .inputPreProcessor(1, new CnnToFeedForwardPreProcessor()).build();
 
@@ -230,13 +232,13 @@ public class MultiLayerNeuralNetConfigurationTest {
     }
 
     @Test
-    public void testIterationListener() {
+    public void testTrainingListener() {
         MultiLayerNetwork model1 = new MultiLayerNetwork(getConf());
         model1.init();
-        model1.setListeners(Collections.singletonList((IterationListener) new ScoreIterationListener(1)));
+        model1.addListeners( new ScoreIterationListener(1));
 
         MultiLayerNetwork model2 = new MultiLayerNetwork(getConf());
-        model2.setListeners(Collections.singletonList((IterationListener) new ScoreIterationListener(1)));
+        model2.addListeners( new ScoreIterationListener(1));
         model2.init();
 
         Layer[] l1 = model1.getLayers();
@@ -251,7 +253,7 @@ public class MultiLayerNeuralNetConfigurationTest {
 
     private static MultiLayerConfiguration getConf() {
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder().seed(12345l).list()
-                        .layer(0, new RBM.Builder().nIn(2).nOut(2).weightInit(WeightInit.DISTRIBUTION)
+                        .layer(0, new DenseLayer.Builder().nIn(2).nOut(2).weightInit(WeightInit.DISTRIBUTION)
                                         .dist(new NormalDistribution(0, 1)).build())
                         .layer(1, new OutputLayer.Builder().nIn(2).nOut(1).weightInit(WeightInit.DISTRIBUTION)
                                         .dist(new NormalDistribution(0, 1)).build())
