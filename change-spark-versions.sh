@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 
+################################################################################
+# Copyright (c) 2015-2018 Skymind, Inc.
 #
-# Licensed to the Apache Software Foundation (ASF) under one or more
-# contributor license agreements.  See the NOTICE file distributed with
-# this work for additional information regarding copyright ownership.
-# The ASF licenses this file to You under the Apache License, Version 2.0
-# (the "License"); you may not use this file except in compliance with
-# the License.  You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
+# This program and the accompanying materials are made available under the
+# terms of the Apache License, Version 2.0 which is available at
+# https://www.apache.org/licenses/LICENSE-2.0.
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 #
+# SPDX-License-Identifier: Apache-2.0
+################################################################################
 
 # This shell script is adapted from Apache Flink (in turn, adapted from Apache Spark) some modifications.
 
@@ -79,8 +78,8 @@ find "$BASEDIR" -name 'pom.xml' -not -path '*target*' \
 find "$BASEDIR" -name 'pom.xml' -not -path '*target*' \
   -exec bash -c "sed_i 's/\(spark.version>\)'$FROM_VERSION'<\/spark.version>/\1'$TO_VERSION'<\/spark.version>/g' {}" \;
 
-#Spark versions, like <version>xxx_spark_2xxx</version>
+#Spark versions, like <version>xxx_spark_2xxx</version> OR <datavec.spark.version>xxx_spark_2xxx</datavec.spark.version>
 find "$BASEDIR" -name 'pom.xml' -not -path '*target*' \
-  -exec bash -c "sed_i 's/\(version>.*_spark_\)'$FROM_BINARY'\(.*\)<\/\(.*\)version>/\1'$TO_BINARY'\2<\/\3version>/g' {}" \;
+  -exec bash -c "sed_i 's/\(version>.*_spark_\)'$FROM_BINARY'\(.*\)version>/\1'$TO_BINARY'\2version>/g' {}" \;
 
 echo "Done updating Spark versions.";
